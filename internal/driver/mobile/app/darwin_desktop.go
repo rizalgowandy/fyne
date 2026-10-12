@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin
-// +build !ios
+//go:build darwin && !ios
 
 package app
 
@@ -24,17 +23,16 @@ void makeCurrentContext(GLintptr);
 uint64 threadID();
 */
 import "C"
+
 import (
 	"log"
 	"runtime"
-	"sync"
 
 	"fyne.io/fyne/v2/internal/driver/mobile/event/key"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/lifecycle"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/paint"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/size"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/touch"
-	"fyne.io/fyne/v2/internal/driver/mobile/geom"
 )
 
 var initThreadID uint64
@@ -63,6 +61,10 @@ func main(f func(App)) {
 	}()
 
 	C.runApp()
+}
+
+func GoBack() {
+	// When simulating mobile there are no other activities open (and we can't just force background)
 }
 
 // loop is the primary drawing loop.
@@ -131,23 +133,18 @@ var windowHeightPx float32
 //export setGeom
 func setGeom(pixelsPerPt float32, widthPx, heightPx int) {
 	windowHeightPx = float32(heightPx)
-	theApp.eventsIn <- size.Event{
+	theApp.events.In() <- size.Event{
 		WidthPx:     widthPx,
 		HeightPx:    heightPx,
-		WidthPt:     geom.Pt(float32(widthPx) / pixelsPerPt),
-		HeightPt:    geom.Pt(float32(heightPx) / pixelsPerPt),
+		WidthPt:     float32(widthPx) / pixelsPerPt,
+		HeightPt:    float32(heightPx) / pixelsPerPt,
 		PixelsPerPt: pixelsPerPt,
 		Orientation: screenOrientation(widthPx, heightPx),
 	}
 }
 
-var touchEvents struct {
-	sync.Mutex
-	pending []touch.Event
-}
-
 func sendTouch(t touch.Type, x, y float32) {
-	theApp.eventsIn <- touch.Event{
+	theApp.events.In() <- touch.Event{
 		X:        x,
 		Y:        windowHeightPx - y,
 		Sequence: 0,
@@ -164,8 +161,18 @@ func eventMouseDragged(x, y float32) { sendTouch(touch.TypeMove, x, y) }
 //export eventMouseEnd
 func eventMouseEnd(x, y float32) { sendTouch(touch.TypeEnd, x, y) }
 
+var stopped = false
+
 //export lifecycleDead
-func lifecycleDead() { theApp.sendLifecycle(lifecycle.StageDead) }
+func lifecycleDead() {
+	if stopped {
+		return
+	}
+	stopped = true
+
+	theApp.sendLifecycle(lifecycle.StageDead)
+	theApp.events.Close()
+}
 
 //export eventKey
 func eventKey(runeVal int32, direction uint8, code uint16, flags uint32) {
@@ -176,7 +183,7 @@ func eventKey(runeVal int32, direction uint8, code uint16, flags uint32) {
 		}
 	}
 
-	theApp.eventsIn <- key.Event{
+	theApp.events.In() <- key.Event{
 		Rune:      convRune(rune(runeVal)),
 		Code:      convVirtualKeyCode(code),
 		Modifiers: modifiers,
@@ -395,6 +402,7 @@ var virtualKeyCodeMap = map[uint16]key.Code{
 // into the standard keycodes used by the key package.
 //
 // To get a sense of the key map, see the diagram on
+//
 //	http://boredzo.org/blog/archives/2007-05-22/virtual-key-codes
 func convVirtualKeyCode(vkcode uint16) key.Code {
 	if code, ok := virtualKeyCodeMap[vkcode]; ok {

@@ -1,4 +1,4 @@
-// +build android
+//go:build android
 
 package mobile
 
@@ -11,6 +11,7 @@ char *getClipboardContent(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx);
 void setClipboardContent(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char *content);
 */
 import "C"
+
 import (
 	"unsafe"
 
@@ -18,7 +19,7 @@ import (
 )
 
 // Content returns the clipboard content for Android
-func (c *mobileClipboard) Content() string {
+func (c mobileClipboard) Content() string {
 	content := ""
 	app.RunOnJVM(func(vm, env, ctx uintptr) error {
 		chars := C.getClipboardContent(C.uintptr_t(vm), C.uintptr_t(env), C.uintptr_t(ctx))
@@ -34,7 +35,7 @@ func (c *mobileClipboard) Content() string {
 }
 
 // SetContent sets the clipboard content for Android
-func (c *mobileClipboard) SetContent(content string) {
+func (c mobileClipboard) SetContent(content string) {
 	contentStr := C.CString(content)
 	defer C.free(unsafe.Pointer(contentStr))
 

@@ -1,12 +1,14 @@
 package layout
 
-import "fyne.io/fyne/v2"
+import (
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/internal"
+)
 
 // Declare conformity with Layout interface
 var _ fyne.Layout = (*centerLayout)(nil)
 
-type centerLayout struct {
-}
+type centerLayout struct{}
 
 // NewCenterLayout creates a new CenterLayout instance
 func NewCenterLayout() fyne.Layout {
@@ -19,7 +21,7 @@ func (c *centerLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	for _, child := range objects {
 		childMin := child.MinSize()
 		child.Resize(childMin)
-		child.Move(fyne.NewPos(float32(size.Width-childMin.Width)/2, float32(size.Height-childMin.Height)/2))
+		child.Move(fyne.NewPos((size.Width-childMin.Width)/2, (size.Height-childMin.Height)/2))
 	}
 }
 
@@ -32,7 +34,7 @@ func (c *centerLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 			continue
 		}
 
-		minSize = minSize.Max(child.MinSize())
+		minSize = internal.MaxSizes(minSize, child.MinSize())
 	}
 
 	return minSize

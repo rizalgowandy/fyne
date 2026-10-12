@@ -1,10 +1,13 @@
 package dialog
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	intWidget "fyne.io/fyne/v2/internal/widget"
+	"fyne.io/fyne/v2/lang"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -16,55 +19,59 @@ import (
 func TestShowFolderOpen(t *testing.T) {
 	var chosen fyne.ListableURI
 	var openErr error
-	win := test.NewWindow(widget.NewLabel("OpenDir"))
+	win := test.NewTempWindow(t, widget.NewLabel("OpenDir"))
 	d := NewFolderOpen(func(file fyne.ListableURI, err error) {
 		chosen = file
 		openErr = err
 	}, win)
-	testData, _ := filepath.Abs("testdata")
-	dir, err := storage.ListerForURI(storage.NewFileURI(testData))
+	dir, err := storage.ListerForURI(storage.NewFileURI("testdata"))
 	if err != nil {
 		t.Error("Failed to open testdata dir", err)
 	}
 	d.SetLocation(dir)
 	d.Show()
 
-	popup := win.Canvas().Overlays().Top().(*widget.PopUp)
+	popup := win.Canvas().Overlays().Top().(*intWidget.OverlayContainer).Content.(*widget.PopUp)
 	defer win.Canvas().Overlays().Remove(popup)
 	assert.NotNil(t, popup)
 
-	ui := popup.Content.(*fyne.Container)
-	title := ui.Objects[1].(*fyne.Container).Objects[1].(*widget.Label)
-	assert.Equal(t, "Open Folder", title.Text)
+	// padded container -> content container
+	ui := popup.Content.(*fyne.Container).Objects[0].(*fyne.Container)
+	title := ui.Objects[1].(*fyne.Container).Objects[0].(*widget.Label)
+	assert.Equal(t, lang.L("Open")+" "+lang.L("Folder"), title.Text)
 
-	nameLabel := ui.Objects[2].(*fyne.Container).Objects[1].(*container.Scroll).Content.(*widget.Label)
-	buttons := ui.Objects[2].(*fyne.Container).Objects[0].(*fyne.Container)
+	nameLabel := ui.Objects[2].(*fyne.Container).Objects[0].(*container.Scroll).Content.(*widget.Label)
+	buttons := ui.Objects[2].(*fyne.Container).Objects[1].(*fyne.Container)
 	open := buttons.Objects[1].(*widget.Button)
 
-	files := ui.Objects[0].(*container.Split).Trailing.(*fyne.Container).Objects[1].(*container.Scroll).Content.(*fyne.Container).Objects[0].(*fyne.Container)
-	assert.Greater(t, len(files.Objects), 0)
+	files := ui.Objects[0].(*container.Split).Trailing.(*fyne.Container).Objects[0].(*container.Scroll).Content.(*fyne.Container).Objects[0].(*widget.GridWrap)
+	assert.NotEmpty(t, d.dialog.data)
 
-	fileName := files.Objects[0].(*fileDialogItem).name
-	assert.Equal(t, "(Parent)", fileName)
+	item := test.TempWidgetRenderer(t, files).Objects()[0].(*container.Scroll).Content.(*fyne.Container).Objects[0]
+	fileName := test.TempWidgetRenderer(t, item.(fyne.Widget)).Objects()[1].(*fileDialogItem).name
+	assert.Equal(t, lang.L("(Parent)"), fileName)
 	assert.False(t, open.Disabled())
 
-	var target *fileDialogItem
-	for _, icon := range files.Objects {
-		if icon.(*fileDialogItem).dir {
-			target = icon.(*fileDialogItem)
+	var target fyne.URI
+	id := -1
+	for i, uri := range d.dialog.data {
+		ok, _ := storage.CanList(uri)
+		if ok {
+			target = uri
+			id = i
 		} else {
 			t.Error("Folder dialog should not list files")
 		}
 	}
 
-	assert.NotNil(t, target, "Failed to find folder in testdata")
-	test.Tap(target)
-	assert.Equal(t, target.location.Name(), nameLabel.Text)
+	require.NotNil(t, target, "Failed to find folder in testdata")
+	d.dialog.files.(*widget.GridWrap).Select(id)
+	assert.Equal(t, target.Name(), nameLabel.Text)
 	assert.False(t, open.Disabled())
 
 	test.Tap(open)
 	assert.Nil(t, win.Canvas().Overlays().Top())
-	assert.Nil(t, openErr)
+	assert.NoError(t, openErr)
 
-	assert.Equal(t, target.location.String(), chosen.String())
+	assert.Equal(t, target.String(), chosen.String())
 }

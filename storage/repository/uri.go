@@ -3,38 +3,48 @@ package repository
 import (
 	"bufio"
 	"mime"
-	"path/filepath"
+	"net/url"
+	"path"
 	"strings"
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 )
 
+// EqualURI returns true if the two URIs are equal.
+//
+// Since: 2.6
+func EqualURI(t1, t2 fyne.URI) bool {
+	if t1 == nil || t2 == nil {
+		return t1 == t2
+	}
+
+	u1, ok1 := t1.(*uri)
+	u2, ok2 := t2.(*uri)
+	if ok1 && ok2 {
+		// Knowing the type, pointers are either the same or fields are the same.
+		return u1 == u2 || *u1 == *u2
+	}
+
+	return t1 == t2 || t1.String() == t2.String()
+}
+
 // Declare conformance with fyne.URI interface.
 var _ fyne.URI = &uri{}
 
 type uri struct {
-	scheme    string
-	authority string
-	// haveAuthority lets us distinguish between a present-but-empty
-	// authority, and having no authority. This is needed because net/url
-	// incorrectly handles scheme:/absolute/path URIs.
-	haveAuthority bool
-	path          string
-	query         string
-	fragment      string
+	url.URL
 }
 
 func (u *uri) Extension() string {
-	return filepath.Ext(u.path)
+	return path.Ext(u.URL.Path)
 }
 
 func (u *uri) Name() string {
-	return filepath.Base(u.path)
+	return path.Base(u.URL.Path)
 }
 
 func (u *uri) MimeType() string {
-
 	mimeTypeFull := mime.TypeByExtension(u.Extension())
 	if mimeTypeFull == "" {
 		mimeTypeFull = "text/plain"
@@ -54,43 +64,32 @@ func (u *uri) MimeType() string {
 		}
 	}
 
-	return strings.Split(mimeTypeFull, ";")[0]
+	mimeType, _, _ := strings.Cut(mimeTypeFull, ";")
+	return mimeType
 }
 
 func (u *uri) Scheme() string {
-	return u.scheme
-}
-
-func (u *uri) String() string {
-	// NOTE: this string reconstruction is mandated by IETF RFC3986,
-	// section 5.3, pp. 35.
-
-	s := u.scheme + ":"
-	if u.haveAuthority {
-		s += "//" + u.authority
-	}
-	s += u.path
-	if len(u.query) > 0 {
-		s += "?" + u.query
-	}
-	if len(u.fragment) > 0 {
-		s += "#" + u.fragment
-	}
-	return s
+	return u.URL.Scheme
 }
 
 func (u *uri) Authority() string {
-	return u.authority
+	if u.User != nil {
+		s := u.User.String()
+		if s != "" {
+			return s + "@" + u.Host
+		}
+	}
+	return u.Host
 }
 
 func (u *uri) Path() string {
-	return u.path
+	return u.URL.Path
 }
 
 func (u *uri) Query() string {
-	return u.query
+	return u.RawQuery
 }
 
 func (u *uri) Fragment() string {
-	return u.fragment
+	return u.URL.Fragment
 }

@@ -12,9 +12,9 @@
 // sent to unmarshalling. This allows tests to validate each struct representation
 // of the binary format as follows:
 //
-//  * unmarshal the output of aapt
-//  * marshal the struct representation
-//  * perform byte-to-byte comparison with aapt output per chunk header and body
+//   - unmarshal the output of aapt
+//   - marshal the struct representation
+//   - perform byte-to-byte comparison with aapt output per chunk header and body
 //
 // This process should strive to make structs idiomatic to make parsing xml text
 // into structs trivial.
@@ -22,9 +22,9 @@
 // Once the struct representation is validated, tests for parsing xml text
 // into structs can become self-referential as the following holds true:
 //
-//  * the unmarshalled input of aapt output is the only valid target
-//  * the unmarshalled input of xml text may be compared to the unmarshalled
-//    input of aapt output to identify errors, e.g. text-trims, wrong flags, etc
+//   - the unmarshalled input of aapt output is the only valid target
+//   - the unmarshalled input of xml text may be compared to the unmarshalled
+//     input of aapt output to identify errors, e.g. text-trims, wrong flags, etc
 //
 // This provides validation, byte-for-byte, for producing binary xml resources.
 //
@@ -34,11 +34,11 @@
 //
 // A simple view of binary xml document structure:
 //
-//  XML
-//    Pool
-//    Map
-//    Namespace
-//    [...node]
+//	XML
+//	  Pool
+//	  Map
+//	  Namespace
+//	  [...node]
 //
 // Additional resources:
 // https://android.googlesource.com/platform/frameworks/base/+/master/include/androidfw/ResourceTypes.h
@@ -61,7 +61,7 @@ func errWrongType(have ResType, want ...ResType) error {
 	return fmt.Errorf("wrong resource type %s, want one of %v", have, want)
 }
 
-//ResType is the type of a resource
+// ResType is the type of a resource
 type ResType uint16
 
 // IsSupported returns if a type is supported
@@ -467,6 +467,42 @@ func resolveElements(elms []*Element, pool, bxPool *Pool) {
 		sort.Sort(byType(el.attrs))
 		sort.Sort(byNamespace(el.attrs))
 		sort.Sort(byName(el.attrs))
+
+		if el.Name.Resolve(bxPool) == "application" {
+			// The android manifest seems to be very delicate - though it may be code in this package
+			// set the order very carefully... #2653 and others
+			sort.Slice(el.attrs, func(i, j int) bool {
+				a := el.attrs[i].Name.Resolve(bxPool)
+				if a == "configChanges" || a == "debuggable" {
+					return false
+				}
+				if a == "label" {
+					return true
+				}
+
+				b := el.attrs[j].Name.Resolve(bxPool)
+				return a < b
+			})
+		} else if el.Name.Resolve(bxPool) == "activity" {
+			// As above the android manifest seems to be very delicate - name must be first then exported before configChanges
+			sort.Slice(el.attrs, func(i, j int) bool {
+				a := el.attrs[i].Name.Resolve(bxPool)
+				if a == "name" {
+					return true
+				}
+
+				b := el.attrs[j].Name.Resolve(bxPool)
+				if a == "exported" {
+					return b != "name"
+				}
+
+				if b == "name" {
+					return false
+				}
+				return a < b
+			})
+		}
+
 		for _, child := range el.Children {
 			asort(child)
 		}
@@ -650,7 +686,7 @@ func addAttributeNamespace(attr xml.Attr, nattr *Attribute, tbl *Table, pool *Po
 				return fmt.Errorf("invalid bool value %q", attr.Value)
 			}
 		case DataIntDec, DataFloat, DataFraction:
-			// TODO DataFraction needs it's own case statement. minSdkVersion identifies as DataFraction
+			// TODO DataFraction needs its own case statement. minSdkVersion identifies as DataFraction
 			// but has accepted input in the past such as android:minSdkVersion="L"
 			// Other use-cases for DataFraction are currently unknown as applicable to manifest generation
 			// but this provides minimum support for writing out minSdkVersion="15" correctly.
@@ -815,7 +851,7 @@ func (bx *XML) kind(t ResType) (unmarshaler, error) {
 	}
 }
 
-// MarshalBinary formats the XML in memory to it's text appearance
+// MarshalBinary formats the XML in memory to its text appearance
 func (bx *XML) MarshalBinary() ([]byte, error) {
 	bx.typ = ResXML
 	bx.headerByteSize = 8
@@ -956,7 +992,7 @@ func poolTrim(s string) string {
 }
 
 // byNamespace sorts attributes based on string pool position of namespace.
-// Given that "android" always preceds "" in the pool, this results in the
+// Given that "android" always precedes "" in the pool, this results in the
 // correct ordering of attributes.
 type byNamespace []*Attribute
 

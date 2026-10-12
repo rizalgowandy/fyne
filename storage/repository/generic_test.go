@@ -3,6 +3,7 @@ package repository
 import (
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,7 +22,7 @@ func TestGenericParent(t *testing.T) {
 		t.Logf("case %d, input='%s', expect='%s', err='%v'\n", i, c.input, c.expect, c.err)
 
 		u, err := ParseURI(c.input)
-		assert.Nil(t, err)
+		assert.NoError(t, err)
 
 		res, err := GenericParent(u)
 		assert.Equal(t, c.err, err)
@@ -51,11 +52,39 @@ func TestGenericChild(t *testing.T) {
 		t.Logf("case %d, input='%s', component='%s', expect='%s', err='%v'\n", i, c.input, c.component, c.expect, c.err)
 
 		u, err := ParseURI(c.input)
-		assert.Nil(t, err)
+		assert.NoError(t, err)
 
 		res, err := GenericChild(u, c.component)
 		assert.Equal(t, c.err, err)
 
 		assert.Equal(t, c.expect, res.String())
 	}
+}
+
+var benchURI fyne.URI
+
+func BenchmarkGenericParent(b *testing.B) {
+	var uri fyne.URI
+	input, _ := ParseURI("foo://example.com:8042/over/there?name=ferret#nose")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		uri, _ = GenericParent(input)
+	}
+
+	benchURI = uri
+}
+
+func BenchmarkGenericChild(b *testing.B) {
+	var uri fyne.URI
+	input, _ := ParseURI("foo://example.com:8042/over/there?name=ferret#nose")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		uri, _ = GenericChild(input, "bar")
+	}
+
+	benchURI = uri
 }

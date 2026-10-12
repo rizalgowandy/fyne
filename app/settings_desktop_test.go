@@ -1,25 +1,17 @@
-// +build !android,!ios,!mobile
+//go:build !android && !ios && !mobile
 
 package app
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/theme"
 )
-
-func TestDefaultTheme(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" { // system defines default for macOS and Windows
-		assert.Equal(t, theme.VariantDark, defaultVariant())
-	}
-}
 
 func TestEnsureDir(t *testing.T) {
 	tmpDir := testPath("fynetest")
@@ -52,11 +44,11 @@ func TestWatchFile(t *testing.T) {
 	f.Close()
 	defer os.Remove(path)
 
-	called := make(chan interface{}, 1)
+	called := make(chan any, 1)
 	watchFile(path, func() {
 		called <- true
 	})
-	file, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	file, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	file.WriteString(" ")
 	file.Close()
 
@@ -73,7 +65,7 @@ func TestFileWatcher_FileDeleted(t *testing.T) {
 	f.Close()
 	defer os.Remove(path)
 
-	called := make(chan interface{}, 1)
+	called := make(chan any, 1)
 	watcher := watchFile(path, func() {
 		called <- true
 	})

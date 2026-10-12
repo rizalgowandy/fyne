@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build linux darwin windows
+//go:build freebsd || linux || darwin || windows || openbsd
 
 package app
 
 import (
+	"fyne.io/fyne/v2/internal/async"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/lifecycle"
-	"fyne.io/fyne/v2/internal/driver/mobile/event/size"
 	"fyne.io/fyne/v2/internal/driver/mobile/gl"
 
 	// Initialize necessary mobile functionality, such as logging.
@@ -34,10 +34,10 @@ type App interface {
 	//  - touch.Event
 	// from the golang.org/x/mobile/event/etc packages. Other packages may
 	// define other event types that are carried on this channel.
-	Events() <-chan interface{}
+	Events() <-chan any
 
 	// Send sends an event on the events channel. It does not block.
-	Send(event interface{})
+	Send(event any)
 
 	// Publish flushes any pending drawing commands, such as OpenGL calls, and
 	// swaps the back buffer to the screen.
@@ -46,13 +46,13 @@ type App interface {
 	// TODO: replace filters (and the Events channel) with a NextEvent method?
 
 	// Filter calls each registered event filter function in sequence.
-	Filter(event interface{}) interface{}
+	Filter(event any) any
 
 	// RegisterFilter registers a event filter function to be called by Filter. The
 	// function can return a different event, or return nil to consume the event,
 	// but the function can also return its argument unchanged, where its purpose
 	// is to trigger a side effect rather than modify the event.
-	RegisterFilter(f func(interface{}) interface{})
+	RegisterFilter(f func(any) any)
 
 	ShowVirtualKeyboard(KeyboardType)
 	HideVirtualKeyboard()
@@ -74,34 +74,20 @@ type PublishResult struct {
 }
 
 var theApp = &app{
-	eventsOut:      make(chan interface{}),
+	events:         async.NewUnboundedChan[any](),
 	lifecycleStage: lifecycle.StageDead,
 	publish:        make(chan struct{}),
 	publishResult:  make(chan PublishResult),
 }
 
 func init() {
-	theApp.eventsIn = pump(theApp.eventsOut)
 	theApp.glctx, theApp.worker = gl.NewContext()
 }
 
-func (a *app) sendLifecycle(to lifecycle.Stage) {
-	if a.lifecycleStage == to {
-		return
-	}
-	a.eventsIn <- lifecycle.Event{
-		From:        a.lifecycleStage,
-		To:          to,
-		DrawContext: a.glctx,
-	}
-	a.lifecycleStage = to
-}
-
 type app struct {
-	filters []func(interface{}) interface{}
+	filters []func(any) any
 
-	eventsOut      chan interface{}
-	eventsIn       chan interface{}
+	events         *async.UnboundedChan[any]
 	lifecycleStage lifecycle.Stage
 	publish        chan struct{}
 	publishResult  chan PublishResult
@@ -110,12 +96,12 @@ type app struct {
 	worker gl.Worker
 }
 
-func (a *app) Events() <-chan interface{} {
-	return a.eventsOut
+func (a *app) Events() <-chan any {
+	return a.events.Out()
 }
 
-func (a *app) Send(event interface{}) {
-	a.eventsIn <- event
+func (a *app) Send(event any) {
+	a.events.In() <- event
 }
 
 func (a *app) Publish() PublishResult {
@@ -131,14 +117,14 @@ func (a *app) Publish() PublishResult {
 	return <-a.publishResult
 }
 
-func (a *app) Filter(event interface{}) interface{} {
+func (a *app) Filter(event any) any {
 	for _, f := range a.filters {
 		event = f(event)
 	}
 	return event
 }
 
-func (a *app) RegisterFilter(f func(interface{}) interface{}) {
+func (a *app) RegisterFilter(f func(any) any) {
 	a.filters = append(a.filters, f)
 }
 
@@ -153,97 +139,7 @@ func (a *app) HideVirtualKeyboard() {
 func (a *app) ShowFileOpenPicker(callback func(string, func()), filter *FileFilter) {
 	driverShowFileOpenPicker(callback, filter)
 }
+
 func (a *app) ShowFileSavePicker(callback func(string, func()), filter *FileFilter, filename string) {
 	driverShowFileSavePicker(callback, filter, filename)
-}
-
-type stopPumping struct{}
-
-// pump returns a channel src such that sending on src will eventually send on
-// dst, in order, but that src will always be ready to send/receive soon, even
-// if dst currently isn't. It is effectively an infinitely buffered channel.
-//
-// In particular, goroutine A sending on src will not deadlock even if goroutine
-// B that's responsible for receiving on dst is currently blocked trying to
-// send to A on a separate channel.
-//
-// Send a stopPumping on the src channel to close the dst channel after all queued
-// events are sent on dst. After that, other goroutines can still send to src,
-// so that such sends won't block forever, but such events will be ignored.
-func pump(dst chan interface{}) (src chan interface{}) {
-	src = make(chan interface{})
-	go func() {
-		// initialSize is the initial size of the circular buffer. It must be a
-		// power of 2.
-		const initialSize = 16
-		i, j, buf, mask := 0, 0, make([]interface{}, initialSize), initialSize-1
-
-		srcActive := true
-		for {
-			maybeDst := dst
-			if i == j {
-				maybeDst = nil
-			}
-			if maybeDst == nil && !srcActive {
-				// Pump is stopped and empty.
-				break
-			}
-
-			select {
-			case maybeDst <- buf[i&mask]:
-				buf[i&mask] = nil
-				i++
-
-			case e := <-src:
-				if _, ok := e.(stopPumping); ok {
-					srcActive = false
-					continue
-				}
-
-				if !srcActive {
-					continue
-				}
-
-				// Allocate a bigger buffer if necessary.
-				if i+len(buf) == j {
-					b := make([]interface{}, 2*len(buf))
-					n := copy(b, buf[j&mask:])
-					copy(b[n:], buf[:j&mask])
-					i, j = 0, len(buf)
-					buf, mask = b, len(b)-1
-				}
-
-				buf[j&mask] = e
-				j++
-			}
-		}
-
-		close(dst)
-		// Block forever.
-		for range src {
-		}
-	}()
-	return src
-}
-
-// TODO: do this for all build targets, not just linux (x11 and Android)? If
-// so, should package gl instead of this package call RegisterFilter??
-//
-// TODO: does Android need this?? It seems to work without it (Nexus 7,
-// KitKat). If only x11 needs this, should we move this to x11.go??
-func (a *app) registerGLViewportFilter() {
-	a.RegisterFilter(func(e interface{}) interface{} {
-		if e, ok := e.(size.Event); ok {
-			a.glctx.Viewport(0, 0, e.WidthPx, e.HeightPx)
-		}
-		return e
-	})
-}
-
-func screenOrientation(width, height int) size.Orientation {
-	if width > height {
-		return size.OrientationLandscape
-	}
-
-	return size.OrientationPortrait
 }

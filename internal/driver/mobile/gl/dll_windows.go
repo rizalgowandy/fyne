@@ -10,7 +10,6 @@ import (
 	"debug/pe"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -18,7 +17,7 @@ import (
 	"runtime"
 )
 
-var debug = log.New(ioutil.Discard, "gl: ", log.LstdFlags)
+var debug = log.New(io.Discard, "gl: ", log.LstdFlags)
 
 func downloadDLLs() (path string, err error) {
 	url := "https://dl.google.com/go/mobile/angle-bd3f8780b-" + runtime.GOARCH + ".tgz"
@@ -54,11 +53,11 @@ func downloadDLLs() (path string, err error) {
 		}
 		switch header.Name {
 		case "angle-" + runtime.GOARCH + "/libglesv2.dll":
-			bytesGLESv2, err = ioutil.ReadAll(tr)
+			bytesGLESv2, err = io.ReadAll(tr)
 		case "angle-" + runtime.GOARCH + "/libegl.dll":
-			bytesEGL, err = ioutil.ReadAll(tr)
+			bytesEGL, err = io.ReadAll(tr)
 		case "angle-" + runtime.GOARCH + "/d3dcompiler_47.dll":
-			bytesD3DCompiler, err = ioutil.ReadAll(tr)
+			bytesD3DCompiler, err = io.ReadAll(tr)
 		default: // skip
 		}
 		if err != nil {
@@ -70,13 +69,13 @@ func downloadDLLs() (path string, err error) {
 	}
 
 	writeDLLs := func(path string) error {
-		if err := ioutil.WriteFile(filepath.Join(path, "libglesv2.dll"), bytesGLESv2, 0755); err != nil {
+		if err = os.WriteFile(filepath.Join(path, "libglesv2.dll"), bytesGLESv2, 0o755); err != nil {
 			return fmt.Errorf("gl: cannot install ANGLE: %v", err)
 		}
-		if err := ioutil.WriteFile(filepath.Join(path, "libegl.dll"), bytesEGL, 0755); err != nil {
+		if err = os.WriteFile(filepath.Join(path, "libegl.dll"), bytesEGL, 0o755); err != nil {
 			return fmt.Errorf("gl: cannot install ANGLE: %v", err)
 		}
-		if err := ioutil.WriteFile(filepath.Join(path, "d3dcompiler_47.dll"), bytesD3DCompiler, 0755); err != nil {
+		if err = os.WriteFile(filepath.Join(path, "d3dcompiler_47.dll"), bytesD3DCompiler, 0o755); err != nil {
 			return fmt.Errorf("gl: cannot install ANGLE: %v", err)
 		}
 		return nil
@@ -86,17 +85,21 @@ func downloadDLLs() (path string, err error) {
 	//
 	// Traditionally we would use the system32 directory, but it is
 	// no longer writable by normal programs.
-	os.MkdirAll(appdataPath(), 0775)
-	if err := writeDLLs(appdataPath()); err == nil {
+	if err = os.MkdirAll(appdataPath(), 0o775); err != nil {
+		return "", fmt.Errorf("unable to create app data directory: %w", err)
+	}
+
+	if err = writeDLLs(appdataPath()); err == nil {
 		return appdataPath(), nil
 	}
+
 	debug.Printf("DLLs could not be written to %s", appdataPath())
 
 	// Second, install in GOPATH/pkg if it exists.
 	gopath := os.Getenv("GOPATH")
 	gopathpkg := filepath.Join(gopath, "pkg")
-	if _, err := os.Stat(gopathpkg); err == nil && gopath != "" {
-		if err := writeDLLs(gopathpkg); err == nil {
+	if _, err = os.Stat(gopathpkg); err == nil && gopath != "" {
+		if err = writeDLLs(gopathpkg); err == nil {
 			return gopathpkg, nil
 		}
 	}
@@ -104,7 +107,7 @@ func downloadDLLs() (path string, err error) {
 
 	// Third, pick a temporary directory.
 	tmp := os.TempDir()
-	if err := writeDLLs(tmp); err != nil {
+	if err = writeDLLs(tmp); err != nil {
 		return "", fmt.Errorf("gl: unable to install ANGLE DLLs: %v", err)
 	}
 	return tmp, nil
@@ -124,11 +127,11 @@ func containsDLLs(dir string) bool {
 
 		switch file.Machine {
 		case pe.IMAGE_FILE_MACHINE_AMD64:
-			return "amd64" == runtime.GOARCH
+			return runtime.GOARCH == "amd64"
 		case pe.IMAGE_FILE_MACHINE_ARM:
-			return "arm" == runtime.GOARCH
+			return runtime.GOARCH == "arm"
 		case pe.IMAGE_FILE_MACHINE_I386:
-			return "386" == runtime.GOARCH
+			return runtime.GOARCH == "386"
 		}
 		return false
 	}
@@ -140,7 +143,7 @@ func chromePath() string {
 	// dlls are stored in:
 	//   <BASE>/<VERSION>/libglesv2.dll
 
-	var installdirs = []string{
+	installdirs := []string{
 		// Chrome User
 		filepath.Join(os.Getenv("LOCALAPPDATA"), "Google", "Chrome", "Application"),
 		// Chrome System
@@ -152,7 +155,7 @@ func chromePath() string {
 	}
 
 	for _, installdir := range installdirs {
-		versiondirs, err := ioutil.ReadDir(installdir)
+		versiondirs, err := os.ReadDir(installdir)
 		if err != nil {
 			continue
 		}

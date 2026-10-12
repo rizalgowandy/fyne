@@ -1,4 +1,4 @@
-// +build mobile
+//go:build mobile
 
 package container_test
 
@@ -11,13 +11,13 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDocTabs_ApplyTheme(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(
 		container.NewDocTabs(&container.TabItem{Text: "Test", Content: widget.NewLabel("Text")}),
@@ -27,15 +27,15 @@ func TestDocTabs_ApplyTheme(t *testing.T) {
 	w.Resize(fyne.NewSize(150, 150))
 	c := w.Canvas()
 
-	test.AssertImageMatches(t, "doctabs/mobile/theme_default.png", c.Capture())
+	test.AssertRendersToImage(t, "doctabs/mobile/theme_default.png", c)
 
 	test.ApplyTheme(t, test.NewTheme())
-	test.AssertImageMatches(t, "doctabs/mobile/theme_ugly.png", c.Capture())
+	w.Content().Refresh()
+	test.AssertRendersToImage(t, "doctabs/mobile/theme_ugly.png", c)
 }
 
 func TestDocTabs_ChangeItemContent(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
@@ -58,8 +58,7 @@ func TestDocTabs_ChangeItemContent(t *testing.T) {
 }
 
 func TestDocTabs_ChangeItemIcon(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Icon: theme.CancelIcon(), Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Icon: theme.ConfirmIcon(), Content: widget.NewLabel("Text2")}
@@ -82,8 +81,7 @@ func TestDocTabs_ChangeItemIcon(t *testing.T) {
 }
 
 func TestDocTabs_ChangeItemText(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
@@ -106,8 +104,7 @@ func TestDocTabs_ChangeItemText(t *testing.T) {
 }
 
 func TestDocTabs_DynamicTabs(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	tabs := container.NewDocTabs(item1)
@@ -158,9 +155,8 @@ func TestDocTabs_DynamicTabs(t *testing.T) {
 }
 
 func TestDocTabs_HoverButtons(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-	test.ApplyTheme(t, theme.LightTheme())
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
@@ -175,26 +171,10 @@ func TestDocTabs_HoverButtons(t *testing.T) {
 
 	test.MoveMouse(c, fyne.NewPos(10, 10))
 	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
-
-	test.MoveMouse(c, fyne.NewPos(75, 10))
-	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
-
-	test.MoveMouse(c, fyne.NewPos(90, 10))
-	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
-
-	test.MoveMouse(c, fyne.NewPos(10, 10))
-	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
-
-	test.MoveMouse(c, fyne.NewPos(136, 10))
-	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
-
-	test.MoveMouse(c, fyne.NewPos(104, 10))
-	test.AssertRendersToMarkup(t, "doctabs/mobile/hover_none.xml", c, "no hovering on mobile")
 }
 
 func TestDocTabs_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(nil)
 	defer w.Close()
@@ -294,8 +274,7 @@ func TestDocTabs_Layout(t *testing.T) {
 }
 
 func TestDocTabs_SetTabLocation(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text 2")}
@@ -327,8 +306,7 @@ func TestDocTabs_SetTabLocation(t *testing.T) {
 }
 
 func TestDocTabs_Tapped(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text 2")}
@@ -340,7 +318,7 @@ func TestDocTabs_Tapped(t *testing.T) {
 	w := test.NewWindow(tabs)
 	defer w.Close()
 	w.SetPadded(false)
-	w.Resize(fyne.NewSize(300, 100))
+	w.Resize(fyne.NewSize(380, 100))
 	c := w.Canvas()
 
 	require.Equal(t, 0, tabs.SelectedIndex())
@@ -350,7 +328,7 @@ func TestDocTabs_Tapped(t *testing.T) {
 	assert.Equal(t, 1, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "doctabs/mobile/tapped_second_selected.xml", c)
 
-	test.TapCanvas(c, fyne.NewPos(200, 10))
+	test.TapCanvas(c, fyne.NewPos(180, 10))
 	assert.Equal(t, 2, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "doctabs/mobile/tapped_third_selected.xml", c)
 
@@ -358,10 +336,10 @@ func TestDocTabs_Tapped(t *testing.T) {
 	require.Equal(t, 0, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "doctabs/mobile/tapped_first_selected.xml", c)
 
-	test.TapCanvas(c, fyne.NewPos(254, 10))
+	test.TapCanvas(c, fyne.NewPos(320, 10))
 	require.Equal(t, 3, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "doctabs/mobile/tapped_create_tab.xml", c)
 
-	test.TapCanvas(c, fyne.NewPos(286, 10))
+	test.TapCanvas(c, fyne.NewPos(346, 10))
 	test.AssertRendersToMarkup(t, "doctabs/mobile/tapped_all_tabs.xml", c)
 }

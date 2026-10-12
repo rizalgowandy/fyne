@@ -1,18 +1,17 @@
 package glfw
 
 import (
-	"fmt"
 	"runtime"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/internal"
 	"fyne.io/fyne/v2/internal/app"
+	"fyne.io/fyne/v2/internal/async"
 	"fyne.io/fyne/v2/internal/cache"
+	"fyne.io/fyne/v2/internal/driver/common"
 	"fyne.io/fyne/v2/internal/painter"
-
-	"github.com/go-gl/glfw/v3.3/glfw"
+	"fyne.io/fyne/v2/internal/scale"
 )
 
 type funcData struct {
@@ -20,242 +19,233 @@ type funcData struct {
 	done chan struct{} // Zero allocation signalling channel
 }
 
-type drawData struct {
-	f    func()
-	win  *window
-	done chan struct{} // Zero allocation signalling channel
-}
-
 // channel for queuing functions on the main thread
-var funcQueue = make(chan funcData)
-var drawFuncQueue = make(chan drawData)
-var runFlag = false
-var runMutex = &sync.Mutex{}
-var initOnce = &sync.Once{}
-var donePool = &sync.Pool{New: func() interface{} {
-	return make(chan struct{})
-}}
+var (
+	funcQueue        = async.NewUnboundedChan[funcData]()
+	running, drained atomic.Bool
+)
 
 // Arrange that main.main runs on main thread.
 func init() {
 	runtime.LockOSThread()
-}
-
-func running() bool {
-	runMutex.Lock()
-	defer runMutex.Unlock()
-	return runFlag
+	async.SetMainGoroutine()
 }
 
 // force a function f to run on the main thread
 func runOnMain(f func()) {
-	// If we are on main just execute - otherwise add it to the main queue and wait.
-	// The "running" variable is normally false when we are on the main thread.
-	if !running() {
-		f()
-	} else {
-		done := donePool.Get().(chan struct{})
-		defer donePool.Put(done)
+	runOnMainWithWait(f, true)
+}
 
-		funcQueue <- funcData{f: f, done: done}
+// force a function f to run on the main thread and specify if we should wait for it to return
+func runOnMainWithWait(f func(), wait bool) {
+	// If we are on main before app run just execute - otherwise add it to the main queue and wait.
+	// We also need to run it as-is if the app is in the process of shutting down as the queue will be stopped.
+	if (!running.Load() && async.IsMainGoroutine()) || drained.Load() {
+		f()
+		return
+	}
+
+	if wait {
+		done := common.DonePool.Get()
+		defer common.DonePool.Put(done)
+
+		funcQueue.In() <- funcData{f: f, done: done}
 		<-done
+	} else {
+		funcQueue.In() <- funcData{f: f}
 	}
 }
 
-// force a function f to run on the draw thread
-func runOnDraw(w *window, f func()) {
-	done := donePool.Get().(chan struct{})
-	defer donePool.Put(done)
-
-	drawFuncQueue <- drawData{f: f, win: w, done: done}
-	<-done
+func decideRepaint(visible, ready bool, checkDirtyAndClear func() bool) bool {
+	return visible && ready && checkDirtyAndClear()
 }
 
-func (d *gLDriver) initGLFW() {
-	initOnce.Do(func() {
-		err := glfw.Init()
-		if err != nil {
-			fyne.LogError("failed to initialise GLFW", err)
-			return
+func (d *gLDriver) drawSingleFrame() {
+	refreshed := false
+	for _, win := range d.windowList() {
+		w := win.(*window)
+		if w.closing {
+			continue
 		}
 
-		initCursors()
-		d.startDrawThread()
-	})
+		if decideRepaint(w.visible, w.frame.ready(), w.canvas.CheckDirtyAndClear) {
+			w.RunWithContext(func() {
+				if w.driver.repaintWindow(w) {
+					refreshed = true
+				}
+			})
+			w.updateAccessibility()
+		} else {
+			w.markCacheAlive()
+		}
+	}
+	cache.Clean(refreshed)
+}
+
+func (w *window) markCacheAlive() {
+	threshold := time.Now().Add(10*time.Second - cache.ValidDuration)
+	if w.lastWalkedTime.Before(threshold) {
+		w.canvas.WalkTrees(nil, func(node *common.RenderCacheNode, _ fyne.Position) {
+			_ = cache.GetCanvasForObject(node.Obj())
+			if wid, ok := node.Obj().(fyne.Widget); ok {
+				_, _ = cache.CachedRenderer(wid)
+			}
+		})
+		w.lastWalkedTime = time.Now()
+	}
+}
+
+func (d *gLDriver) applyThemeToWindow(w fyne.Window) {
+	if win, ok := w.(*window); ok {
+		win.setDarkMode()
+	}
 }
 
 func (d *gLDriver) runGL() {
-	eventTick := time.NewTicker(time.Second / 60)
-	runMutex.Lock()
-	runFlag = true
-	runMutex.Unlock()
+	if !running.CompareAndSwap(false, true) {
+		return // Run was called twice.
+	}
 
-	d.initGLFW()
-	fyne.CurrentApp().Lifecycle().(*app.Lifecycle).TriggerStarted()
+	d.init()
+	if d.trayStart != nil {
+		d.trayStart()
+	}
+
+	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
+		painter.ClearFontCache()
+		cache.ResetThemeCaches()
+		app.ApplySettingsWithCallback(set, fyne.CurrentApp(), func(w fyne.Window) {
+			d.applyThemeToWindow(w)
+			c, ok := w.Canvas().(*glCanvas)
+			if !ok {
+				return
+			}
+			c.applyThemeOutOfTreeObjects()
+			c.reloadScale()
+		})
+	})
+
+	if f := fyne.CurrentApp().Lifecycle().(*app.Lifecycle).OnStarted(); f != nil {
+		f()
+	}
+
+	eventTick := time.NewTicker(time.Second / 60)
 	for {
 		select {
 		case <-d.done:
 			eventTick.Stop()
-			d.drawDone <- nil // wait for draw thread to stop
-			glfw.Terminate()
-			fyne.CurrentApp().Lifecycle().(*app.Lifecycle).TriggerStopped()
+			d.Terminate()
+			l := fyne.CurrentApp().Lifecycle().(*app.Lifecycle)
+			if f := l.OnStopped(); f != nil {
+				l.QueueEvent(f)
+			}
+
+			// as we are shutting down make sure we drain the pending funcQueue and close it out.
+			for len(funcQueue.Out()) > 0 {
+				f := <-funcQueue.Out()
+				if f.done != nil {
+					f.done <- struct{}{}
+				}
+			}
+			drained.Store(true)
+			funcQueue.Close()
 			return
-		case f := <-funcQueue:
+		case f := <-funcQueue.Out():
 			f.f()
 			if f.done != nil {
 				f.done <- struct{}{}
 			}
 		case <-eventTick.C:
-			d.tryPollEvents()
-			newWindows := []fyne.Window{}
-			reassign := false
-			for _, win := range d.windowList() {
-				w := win.(*window)
+			d.pollEvents()
+			for i := 0; i < len(d.windows); i++ {
+				w := d.windows[i].(*window)
+				w.ensurePositionProcessed()
+
 				if w.viewport == nil {
 					continue
 				}
 
 				if w.viewport.ShouldClose() {
-					reassign = true
-					w.viewLock.Lock()
-					w.visible = false
-					v := w.viewport
-					w.viewLock.Unlock()
-
-					// remove window from window list
-					v.Destroy()
-					w.destroy(d)
+					d.destroyWindow(w, i)
+					i-- // Trailing windows are moved forward one step.
 					continue
 				}
 
-				w.viewLock.RLock()
 				expand := w.shouldExpand
 				fullScreen := w.fullScreen
-				w.viewLock.RUnlock()
 
 				if expand && !fullScreen {
 					w.fitContent()
-					w.viewLock.Lock()
 					shouldExpand := w.shouldExpand
 					w.shouldExpand = false
 					view := w.viewport
-					w.viewLock.Unlock()
-					if shouldExpand {
+
+					if shouldExpand && runtime.GOOS != "js" {
 						view.SetSize(w.shouldWidth, w.shouldHeight)
 					}
 				}
-
-				newWindows = append(newWindows, win)
 			}
-			if reassign {
-				d.windowLock.Lock()
-				d.windows = newWindows
-				d.windowLock.Unlock()
 
-				if len(newWindows) == 0 {
-					d.Quit()
-				}
-			}
+			d.animation.TickAnimations()
+			d.drawSingleFrame()
 		}
 	}
 }
 
-func (d *gLDriver) repaintWindow(w *window) {
+func (d *gLDriver) destroyWindow(w *window, index int) {
+	w.visible = false
+	w.viewport.Destroy()
+	w.destroy(d)
+
+	if index < len(d.windows)-1 {
+		copy(d.windows[index:], d.windows[index+1:])
+	}
+	d.windows[len(d.windows)-1] = nil
+	d.windows = d.windows[:len(d.windows)-1]
+
+	if len(d.windows) == 0 {
+		d.Quit()
+	}
+}
+
+func (d *gLDriver) repaintWindow(w *window) bool {
 	canvas := w.canvas
-	w.RunWithContext(func() {
-		if w.canvas.EnsureMinSize() {
-			w.viewLock.Lock()
-			w.shouldExpand = true
-			w.viewLock.Unlock()
-		}
-		canvas.FreeDirtyTextures()
+	freed := false
+	if canvas.EnsureMinSize() {
+		w.shouldExpand = true
+	}
+	freed = canvas.FreeDirtyTextures() > 0
 
-		updateGLContext(w)
-		canvas.paint(canvas.Size())
+	updateGLContext(w)
+	canvas.paint(canvas.Size())
 
-		w.viewLock.RLock()
-		view := w.viewport
-		visible := w.visible
-		w.viewLock.RUnlock()
+	view := w.viewport
+	visible := w.visible
 
-		if view != nil && visible {
-			view.SwapBuffers()
-		}
-	})
-}
+	if view != nil && visible {
+		w.frame.requestFrame()
+		view.SwapBuffers()
+	}
 
-func (d *gLDriver) startDrawThread() {
-	settingsChange := make(chan fyne.Settings)
-	fyne.CurrentApp().Settings().AddChangeListener(settingsChange)
-	draw := time.NewTicker(time.Second / 60)
-
-	go func() {
-		runtime.LockOSThread()
-
-		for {
-			select {
-			case <-d.drawDone:
-				return
-			case f := <-drawFuncQueue:
-				f.win.RunWithContext(f.f)
-				if f.done != nil {
-					f.done <- struct{}{}
-				}
-			case set := <-settingsChange:
-				painter.ClearFontCache()
-				cache.ResetThemeCaches()
-				app.ApplySettingsWithCallback(set, fyne.CurrentApp(), func(w fyne.Window) {
-					c, ok := w.Canvas().(*glCanvas)
-					if !ok {
-						return
-					}
-					c.applyThemeOutOfTreeObjects()
-					go c.reloadScale()
-				})
-			case <-draw.C:
-				canvasRefreshed := false
-				for _, win := range d.windowList() {
-					w := win.(*window)
-					w.viewLock.RLock()
-					canvas := w.canvas
-					closing := w.closing
-					visible := w.visible
-					w.viewLock.RUnlock()
-					if closing || !canvas.IsDirty() || !visible {
-						continue
-					}
-					canvasRefreshed = true
-					d.repaintWindow(w)
-				}
-				cache.Clean(canvasRefreshed)
-			}
-		}
-	}()
-}
-
-func (d *gLDriver) tryPollEvents() {
-	defer func() {
-		if r := recover(); r != nil {
-			fyne.LogError(fmt.Sprint("GLFW poll event error: ", r), nil)
-		}
-	}()
-
-	glfw.PollEvents() // This call blocks while window is being resized, which prevents freeDirtyTextures from being called
+	// mark that we have walked the window and don't
+	// need to walk it again to mark caches alive
+	w.lastWalkedTime = time.Now()
+	return freed
 }
 
 // refreshWindow requests that the specified window be redrawn
 func refreshWindow(w *window) {
-	w.canvas.SetDirty(true)
+	w.canvas.SetDirty()
 }
 
 func updateGLContext(w *window) {
-	canvas := w.Canvas().(*glCanvas)
+	canvas := w.canvas
 	size := canvas.Size()
 
 	// w.width and w.height are not correct if we are maximised, so figure from canvas
-	winWidth := float32(internal.ScaleInt(canvas, size.Width)) * canvas.texScale
-	winHeight := float32(internal.ScaleInt(canvas, size.Height)) * canvas.texScale
+	winWidth := float32(scale.ToScreenCoordinate(canvas, size.Width)) * canvas.texScale
+	winHeight := float32(scale.ToScreenCoordinate(canvas, size.Height)) * canvas.texScale
 
 	canvas.Painter().SetFrameBufferScale(canvas.texScale)
-	w.canvas.Painter().SetOutputSize(int(winWidth), int(winHeight))
+	canvas.Painter().SetOutputSize(int(winWidth), int(winHeight))
 }

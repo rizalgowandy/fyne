@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin
-// +build !ios
+//go:build darwin && !ios
 
 #include "_cgo_export.h"
 #include <pthread.h>
@@ -137,7 +136,7 @@ uint64 threadID() {
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
-	lifecycleAlive();
+	lifecycleDead();
 }
 
 - (BOOL)acceptsFirstResponder {
@@ -208,7 +207,7 @@ runApp(void) {
 	[menu addItem:quitMenuItem];
 	[menuItem setSubmenu:menu];
 
-	NSRect rect = NSMakeRect(0, 0, 600, 800);
+	NSRect rect = NSMakeRect(0, 0, 500, 1000);
 
 	NSWindow* window = [[[NSWindow alloc] initWithContentRect:rect
 			styleMask:NSWindowStyleMaskTitled

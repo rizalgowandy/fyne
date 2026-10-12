@@ -14,8 +14,7 @@ var (
 )
 
 // customTheme is a simple demonstration of a bespoke theme loaded by a Fyne app.
-type customTheme struct {
-}
+type customTheme struct{}
 
 func (customTheme) Color(c fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
 	switch c {
@@ -35,7 +34,7 @@ func (customTheme) Color(c fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color
 }
 
 func (customTheme) Font(style fyne.TextStyle) fyne.Resource {
-	return theme.DarkTheme().Font(style)
+	return theme.DefaultTheme().Font(style)
 }
 
 func (customTheme) Icon(n fyne.ThemeIconName) fyne.Resource {

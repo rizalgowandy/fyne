@@ -1,7 +1,10 @@
 package widget
 
 import (
+	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -9,11 +12,10 @@ import (
 	"fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
-	"github.com/stretchr/testify/assert"
 )
 
-func textRenderTexts(p fyne.Widget) []*canvas.Text {
-	renderer := cache.Renderer(p).(*textRenderer)
+func richTextRenderTexts(rich fyne.Widget) []*canvas.Text {
+	renderer := cache.Renderer(rich).(*textRenderer)
 	texts := make([]*canvas.Text, len(renderer.Objects()))
 	for i, obj := range renderer.Objects() {
 		texts[i] = obj.(*canvas.Text)
@@ -29,11 +31,102 @@ func trailingBoldErrorSegment() *TextSegment {
 	}}
 }
 
+func TestRichText_Hyperlink_Endline(t *testing.T) {
+	u, _ := url.Parse("https://github.com/fyne-io/fyne")
+	r := NewRichText(
+		&TextSegment{Text: "Text", Style: RichTextStyleInline},
+		&HyperlinkSegment{Text: "Link", URL: u},
+	)
+	r.Resize(r.MinSize())
+	view := cache.Renderer(r)
+
+	assert.Len(t, view.Objects(), 2)
+	assert.Equal(t, view.Objects()[0].Position().Y, view.Objects()[1].Position().Y)   // same baseline
+	assert.Greater(t, view.Objects()[1].Position().X, view.Objects()[0].Position().X) // to the right
+}
+
 func TestText_Alignment(t *testing.T) {
 	seg := trailingBoldErrorSegment()
 	seg.Text = "Test"
 	text := NewRichText(seg)
-	assert.Equal(t, fyne.TextAlignTrailing, test.WidgetRenderer(text).Objects()[0].(*canvas.Text).Alignment)
+	assert.Equal(t, fyne.TextAlignTrailing, test.TempWidgetRenderer(t, text).Objects()[0].(*canvas.Text).Alignment)
+}
+
+func TestText_AlignmentInline(t *testing.T) {
+	seg1 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignTrailing,
+		},
+		Text: "Thing 1",
+	}
+	seg2 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignTrailing,
+			Inline:    true,
+		},
+		Text: "Thing 2",
+	}
+	seg3 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignTrailing,
+			Inline:    true,
+		},
+		Text: "Thing 3",
+	}
+	text := NewRichText(seg1, seg2, seg3)
+	text.Resize(fyne.NewSize(150, 50))
+
+	r := test.TempWidgetRenderer(t, text)
+	obj1 := r.Objects()[0].(*canvas.Text)
+	right1 := obj1.Position().X + obj1.Size().Width
+	assert.Equal(t, fyne.TextAlignTrailing, obj1.Alignment)
+	obj3 := r.Objects()[2].(*canvas.Text)
+	right3 := obj3.Position().X + obj3.Size().Width
+	assert.Equal(t, fyne.TextAlignTrailing, obj3.Alignment)
+
+	assert.Equal(t, right1, right3)
+}
+
+func TestText_AlignmentInlineCenter(t *testing.T) {
+	seg1 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignCenter,
+		},
+		Text: "MMM",
+	}
+	seg2 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignCenter,
+			Inline:    true,
+		},
+		Text: "MMM",
+	}
+	seg3 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignCenter,
+			Inline:    true,
+		},
+		Text: "MMM",
+	}
+	seg4 := &TextSegment{
+		Style: RichTextStyle{
+			Alignment: fyne.TextAlignCenter,
+			Inline:    true,
+		},
+		Text: "MMM",
+	}
+	text := NewRichText(seg1, seg2, seg3, seg4)
+	text.Resize(fyne.NewSize(150, 50))
+
+	r := test.TempWidgetRenderer(t, text)
+	obj1 := r.Objects()[0].(*canvas.Text)
+	left1 := obj1.Position().X
+	assert.Equal(t, fyne.TextAlignCenter, obj1.Alignment)
+	obj3 := r.Objects()[2].(*canvas.Text)
+	left3 := obj3.Position().X
+	assert.Equal(t, fyne.TextAlignCenter, obj3.Alignment)
+
+	assert.Equal(t, left1, left3)
 }
 
 func TestText_Row(t *testing.T) {
@@ -110,6 +203,20 @@ func TestText_Scroll(t *testing.T) {
 	text3.Scroll = widget.ScrollVerticalOnly
 	assert.Equal(t, text3.MinSize().Width, text1.MinSize().Width)
 	assert.Less(t, text3.MinSize().Height, text1.MinSize().Height)
+
+	text4 := NewRichTextWithText("test1\ntest2")
+	text4.Scroll = widget.ScrollVerticalOnly
+	text4.Wrapping = fyne.TextWrapBreak
+
+	text3.Resize(fyne.NewSize(32, 32))
+	text4.Resize(fyne.NewSize(32, 32))
+	assert.Less(t, text4.MinSize().Width, text3.MinSize().Width)
+	assert.Equal(t, text4.MinSize().Height, text3.MinSize().Height)
+
+	content3 := test.TempWidgetRenderer(t, text3).Objects()[0].(*widget.Scroll).Content
+	content4 := test.TempWidgetRenderer(t, text4).Objects()[0].(*widget.Scroll).Content
+	assert.Less(t, content4.MinSize().Width, content3.MinSize().Width)
+	assert.Greater(t, content4.MinSize().Height, content3.MinSize().Height)
 }
 
 func TestText_InsertAt(t *testing.T) {
@@ -148,7 +255,7 @@ func TestText_InsertAt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			text := NewRichTextWithText(tt.fields.buffer)
-			text.insertAt(tt.args.pos, tt.args.runes)
+			text.insertAt(tt.args.pos, []rune(tt.args.runes))
 			assert.Equal(t, tt.wantBuffer, text.String())
 		})
 	}
@@ -156,11 +263,11 @@ func TestText_InsertAt(t *testing.T) {
 
 func TestText_Insert(t *testing.T) {
 	text := NewRichTextWithText("")
-	text.insertAt(0, "a")
+	text.insertAt(0, []rune("a"))
 	assert.Equal(t, "a", text.String())
-	text.insertAt(1, "\n")
+	text.insertAt(1, []rune("\n"))
 	assert.Equal(t, "a\n", text.String())
-	text.insertAt(2, "b")
+	text.insertAt(2, []rune("b"))
 	assert.Equal(t, "a\nb", text.String())
 }
 
@@ -214,7 +321,7 @@ func TestText_DeleteFromTo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			text := NewRichTextWithText(tt.fields.buffer)
 			got := text.deleteFromTo(tt.args.lowBound, tt.args.highBound)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, string(got))
 			assert.Equal(t, tt.wantBuffer, text.String())
 		})
 	}
@@ -302,32 +409,48 @@ func TestText_DeleteFromTo_Segments(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			text := NewRichText(tt.segments...)
 			got := text.deleteFromTo(tt.args.lowBound, tt.args.highBound)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, string(got))
+			for _, s := range tt.wantSegments {
+				if txt, ok := s.(*TextSegment); ok {
+					txt.parent = text
+				}
+			}
 			assert.Equal(t, tt.wantSegments, text.Segments)
 		})
 	}
 }
 
+func TestText_Multiline(t *testing.T) {
+	text := NewRichText(
+		&TextSegment{Text: "line1\nli", Style: RichTextStyleStrong},
+		&TextSegment{Text: "ne2\nline3", Style: RichTextStyleInline},
+	)
+
+	w := test.NewTempWindow(t, text)
+	w.Resize(fyne.NewSize(64, 90))
+	test.AssertImageMatches(t, "richtext/richtext_multiline.png", w.Canvas().Capture())
+}
+
 func TestText_Color(t *testing.T) {
 	text := NewRichText(trailingBoldErrorSegment())
 
-	assert.Equal(t, theme.ErrorColor(), textRenderTexts(text)[0].Color)
+	assert.Equal(t, theme.Color(theme.ColorNameError), richTextRenderTexts(text)[0].Color)
 }
 
 func TestTextRenderer_ApplyTheme(t *testing.T) {
 	label := NewLabel("Test\nLine2")
-	render := test.WidgetRenderer(label).(*textRenderer)
+	texts := labelTextRenderTexts(label)
 
-	text1 := render.Objects()[0].(*canvas.Text)
-	text2 := render.Objects()[1].(*canvas.Text)
+	text1 := texts[0]
+	text2 := texts[1]
 	textSize1 := text1.TextSize
 	textSize2 := text2.TextSize
 	customTextSize1 := textSize1
 	customTextSize2 := textSize2
 	test.WithTestTheme(t, func() {
 		label.Refresh()
-		text1 := render.Objects()[0].(*canvas.Text)
-		text2 := render.Objects()[1].(*canvas.Text)
+		text1 := texts[0]
+		text2 := texts[1]
 		customTextSize1 = text1.TextSize
 		customTextSize2 = text2.TextSize
 	})
@@ -341,9 +464,14 @@ func TestTextProvider_LineSizeToColumn(t *testing.T) {
 	label.CreateRenderer() // TODO make this a simple refresh call once it's in
 	provider := label.provider
 
-	fullSize := provider.lineSizeToColumn(4, 0)
-	assert.Equal(t, fullSize, provider.lineSizeToColumn(10, 0))
-	assert.Greater(t, fullSize.Width, provider.lineSizeToColumn(2, 0).Width)
+	inPad := theme.InnerPadding()
+	textSize := theme.TextSize()
+	fullSize := provider.lineSizeToColumn(4, 0, textSize, inPad)
+	assert.Equal(t, fullSize, provider.lineSizeToColumn(10, 0, textSize, inPad))
+	assert.Greater(t, fullSize.Width, provider.lineSizeToColumn(2, 0, textSize, inPad).Width)
+
+	out := provider.lineSizeToColumn(-1, -1, textSize, inPad)
+	assert.Equal(t, out, provider.lineSizeToColumn(0, 0, textSize, inPad))
 }
 
 func TestText_splitLines(t *testing.T) {
@@ -396,14 +524,16 @@ func TestText_splitLines(t *testing.T) {
 }
 
 func TestText_lineBounds(t *testing.T) {
-	mockMeasurer := func(text []rune) float32 {
-		return float32(len(text))
+	measurer := func(text []rune) fyne.Size {
+		return fyne.MeasureText(string(text), 14, fyne.TextStyle{})
 	}
 	tests := []struct {
-		name string
-		text string
-		wrap fyne.TextWrap
-		want [][2]int
+		name     string
+		text     string
+		wrap     fyne.TextWrap
+		trunc    fyne.TextTruncation
+		want     [][2]int
+		ellipses int
 	}{
 		{
 			name: "Empty_WrapOff",
@@ -416,7 +546,15 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Empty_Truncate",
 			text: "",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
+			want: [][2]int{
+				{0, 0},
+			},
+		},
+		{
+			name:  "Empty_TruncateClip",
+			text:  "",
+			trunc: fyne.TextTruncateClip,
 			want: [][2]int{
 				{0, 0},
 			},
@@ -448,10 +586,27 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Single_Short_Truncate",
 			text: "foobar",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 6},
 			},
+		},
+		{
+			name:  "Single_Short_TruncateClip",
+			text:  "foobar",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 6},
+			},
+		},
+		{
+			name:  "Single_Short_TruncateEllipsis",
+			text:  "foobar",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 6},
+			},
+			ellipses: 0, // too short to cut
 		},
 		{
 			name: "Single_Short_WrapBreak",
@@ -480,10 +635,27 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Single_Long_Truncate",
 			text: "foobar foobar",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 10},
 			},
+		},
+		{
+			name:  "Single_Long_TruncateClip",
+			text:  "foobar foobar",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 10},
+			},
+		},
+		{
+			name:  "Single_Long_TruncateEllipsis",
+			text:  "foobar foobar",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 9},
+			},
+			ellipses: 1,
 		},
 		{
 			name: "Single_Long_WrapBreak",
@@ -515,11 +687,30 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Multiple_Short_Truncate",
 			text: "foo\nbar",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 3},
 				{4, 7},
 			},
+		},
+		{
+			name:  "Multiple_Short_TruncateClip",
+			text:  "foo\nbar",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+			},
+		},
+		{
+			name:  "Multiple_Short_TruncateEllipsis",
+			text:  "foo\nbar",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+			},
+			ellipses: 0, // too wide
 		},
 		{
 			name: "Multiple_Short_WrapBreak",
@@ -552,12 +743,33 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Multiple_Long_Truncate",
 			text: "foobar\nfoobar foobar foobar\nfoobar foobar",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 6},
 				{7, 17},
 				{28, 38},
 			},
+		},
+		{
+			name:  "Multiple_Long_TruncateClip",
+			text:  "foobar\nfoobar foobar foobar\nfoobar foobar",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 6},
+				{7, 17},
+				{28, 38},
+			},
+		},
+		{
+			name:  "Multiple_Long_TruncateEllipsis",
+			text:  "foobar\nfoobar foobar foobar\nfoobar foobar",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 6},
+				{7, 16},
+				{28, 37},
+			},
+			ellipses: 2,
 		},
 		{
 			name: "Multiple_Long_WrapBreak",
@@ -598,13 +810,36 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Multiple_Contiguous_Long_Truncate",
 			text: "foobar\nfoobarfoobarfoobar\nfoobarfoobar\n",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 6},
 				{7, 17},
 				{26, 36},
 				{39, 39},
 			},
+		},
+		{
+			name:  "Multiple_Contiguous_Long_TruncateClip",
+			text:  "foobar\nfoobarfoobarfoobar\nfoobarfoobar\n",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 6},
+				{7, 17},
+				{26, 36},
+				{39, 39},
+			},
+		},
+		{
+			name:  "Multiple_Contiguous_Long_TruncateEllipsis",
+			text:  "foobar\nfoobarfoobarfoobar\nfoobarfoobar\n",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 6},
+				{7, 15},
+				{26, 34},
+				{39, 39},
+			},
+			ellipses: 2,
 		},
 		{
 			name: "Multiple_Contiguous_Long_WrapBreak",
@@ -645,7 +880,27 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Multiple_Trailing_Short_Truncate",
 			text: "foo\nbar\n",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+				{8, 8},
+			},
+		},
+		{
+			name:  "Multiple_Trailing_Short_TruncateClip",
+			text:  "foo\nbar\n",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+				{8, 8},
+			},
+		},
+		{
+			name:  "Multiple_Trailing_Short_TruncateEllipsis",
+			text:  "foo\nbar\n",
+			trunc: fyne.TextTruncateEllipsis,
 			want: [][2]int{
 				{0, 3},
 				{4, 7},
@@ -673,6 +928,27 @@ func TestText_lineBounds(t *testing.T) {
 			},
 		},
 		{
+			name:  "Multiple_Trailing_Short_WrapTruncateClip",
+			text:  "foo\nbar\nbaz",
+			wrap:  fyne.TextWrapBreak,
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+			},
+		},
+		{
+			name:  "Multiple_Trailing_Short_WrapTruncateEllipsis",
+			text:  "foo\nbar\nbaz",
+			wrap:  fyne.TextWrapBreak,
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 3},
+				{4, 7},
+			},
+			ellipses: 0,
+		},
+		{
 			name: "Multiple_Trailing_Long_WrapOff",
 			text: "foobar\nfoobar foobar foobar\nfoobar foobar\n",
 			wrap: fyne.TextWrapOff,
@@ -686,13 +962,36 @@ func TestText_lineBounds(t *testing.T) {
 		{
 			name: "Multiple_Trailing_Long_Truncate",
 			text: "foobar\nfoobar foobar foobar\nfoobar foobar\n",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 6},
 				{7, 17},
 				{28, 38},
 				{42, 42},
 			},
+		},
+		{
+			name:  "Multiple_Trailing_Long_TruncateClip",
+			text:  "foobar\nfoobar foobar foobar\nfoobar foobar\n",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 6},
+				{7, 17},
+				{28, 38},
+				{42, 42},
+			},
+		},
+		{
+			name:  "Multiple_Trailing_Long_TruncateEllipsis",
+			text:  "foobar\nfoobar foobar foobar\nfoobar foobar\n",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 6},
+				{7, 16},
+				{28, 37},
+				{42, 42},
+			},
+			ellipses: 2,
 		},
 		{
 			name: "Multiple_Trailing_Long_WrapBreak",
@@ -721,24 +1020,156 @@ func TestText_lineBounds(t *testing.T) {
 				{42, 42},
 			},
 		},
+		{
+			name:  "Multiple_Trailing_Long_WrapTruncateClip",
+			text:  "foo\nfoobar foobar foobar\nbaz",
+			wrap:  fyne.TextWrapBreak,
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 3},
+				{4, 14},
+			},
+		},
+		{
+			name:  "Multiple_Trailing_Long_WrapTruncateEllipsis",
+			text:  "foo\nfoobar foobar foobar\nbazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+			wrap:  fyne.TextWrapBreak,
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 3},
+				{4, 14},
+				{14, 23},
+			},
+			ellipses: 1,
+		},
+		{
+			name:  "Multiple_Trailing_Long_WrapWordTruncateEllipsis",
+			text:  "foo\nfoobar foobar foobar\nbaz",
+			wrap:  fyne.TextWrapWord,
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 3},
+				{4, 10},
+				{11, 17},
+			},
+			ellipses: 1,
+		},
+		{
+			name:  "Multi_byte_ellipsis_not_truncated",
+			text:  "🪃 234",
+			trunc: fyne.TextTruncateEllipsis,
+			wrap:  fyne.TextWrapOff,
+			want: [][2]int{
+				{0, 5},
+			},
+			ellipses: 0,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := lineBounds(&TextSegment{Text: tt.text}, tt.wrap, 10, 10, mockMeasurer)
+			ellipses := 0
+			richText := NewRichTextWithText(tt.text)
+			richText.Wrapping = tt.wrap
+			richText.Truncation = tt.trunc
+			got, _ := lineBounds(richText, richText.Segments[0], 76, fyne.NewSize(76, 64), measurer)
 			for i, wantRow := range tt.want {
 				assert.Equal(t, wantRow[0], got[i].begin)
 				assert.Equal(t, wantRow[1], got[i].end)
+
+				if got[i].ellipsis {
+					ellipses++
+				}
 			}
+			assert.Equal(t, tt.ellipses, ellipses)
+		})
+	}
+}
+
+func TestText_lineBounds_hyperlinks(t *testing.T) {
+	measurer := func(text []rune) fyne.Size {
+		return fyne.MeasureText(string(text), 14, fyne.TextStyle{})
+	}
+	tests := []struct {
+		name     string
+		text     string
+		wrap     fyne.TextWrap
+		trunc    fyne.TextTruncation
+		want     [][2]int
+		ellipses int
+	}{
+		{
+			name: "Hyperlink_Truncate",
+			text: "this is a long link",
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
+			want: [][2]int{
+				{0, 9},
+			},
+		},
+		{
+			name:  "Hyperlink_TruncateClip",
+			text:  "this is a long link",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 9},
+			},
+		},
+		{
+			name:  "Hyperlink_TruncateEllipsis",
+			text:  "this is a long link",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 8},
+			},
+			ellipses: 1,
+		},
+		{
+			name: "Hyperlink_WrapBreak",
+			text: "this is a long link",
+			wrap: fyne.TextWrapBreak,
+			want: [][2]int{
+				{0, 9},
+				{9, 17},
+			},
+		},
+		{
+			name: "Hyperlink_WrapWord",
+			text: "this is a long link",
+			wrap: fyne.TextWrapWord,
+			want: [][2]int{
+				{0, 9},
+				{10, 14},
+				{15, 19},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ellipses := 0
+			u, _ := url.Parse("https://fyne.io/")
+			richText := NewRichText(&HyperlinkSegment{Text: tt.text, URL: u})
+			richText.Wrapping = tt.wrap
+			richText.Truncation = tt.trunc
+			got, _ := lineBounds(richText, richText.Segments[0], 50, fyne.NewSize(50, 64), measurer)
+			for i, wantRow := range tt.want {
+				assert.Equal(t, wantRow[0], got[i].begin)
+				assert.Equal(t, wantRow[1], got[i].end)
+
+				if got[i].ellipsis {
+					ellipses++
+				}
+			}
+			assert.Equal(t, tt.ellipses, ellipses)
 		})
 	}
 }
 
 func TestText_lineBounds_variable_char_width(t *testing.T) {
 	tests := []struct {
-		name string
-		text string
-		wrap fyne.TextWrap
-		want [][2]int
+		name  string
+		text  string
+		wrap  fyne.TextWrap
+		trunc fyne.TextTruncation
+		want  [][2]int
 	}{
 		{
 			name: "IM_WrapOff",
@@ -751,9 +1182,25 @@ func TestText_lineBounds_variable_char_width(t *testing.T) {
 		{
 			name: "IM_Truncate",
 			text: "iiiiiiiiiimmmmmmmmmm",
-			wrap: fyne.TextTruncate,
+			wrap: fyne.TextWrap(fyne.TextTruncateClip),
 			want: [][2]int{
 				{0, 12},
+			},
+		},
+		{
+			name:  "IM_TruncateClip",
+			text:  "iiiiiiiiiimmmmmmmmmm",
+			trunc: fyne.TextTruncateClip,
+			want: [][2]int{
+				{0, 12},
+			},
+		},
+		{
+			name:  "IM_TruncateEllipsis",
+			text:  "iiiiiiiiiimmmmmmmmmm",
+			trunc: fyne.TextTruncateEllipsis,
+			want: [][2]int{
+				{0, 9},
 			},
 		},
 		{
@@ -779,12 +1226,15 @@ func TestText_lineBounds_variable_char_width(t *testing.T) {
 	}
 	textSize := float32(10)
 	textStyle := fyne.TextStyle{}
-	measurer := func(text []rune) float32 {
-		return fyne.MeasureText(string(text), textSize, textStyle).Width
+	measurer := func(text []rune) fyne.Size {
+		return fyne.MeasureText(string(text), textSize, textStyle)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := lineBounds(&TextSegment{Text: tt.text}, tt.wrap, 50, 50, measurer)
+			richText := NewRichTextWithText(tt.text)
+			richText.Wrapping = tt.wrap
+			richText.Truncation = tt.trunc
+			got, _ := lineBounds(richText, richText.Segments[0], 46, fyne.NewSize(46, 184), measurer)
 			for i, wantRow := range tt.want {
 				assert.Equal(t, wantRow[0], got[i].begin)
 				assert.Equal(t, wantRow[1], got[i].end)
@@ -793,13 +1243,28 @@ func TestText_lineBounds_variable_char_width(t *testing.T) {
 	}
 }
 
-func TestText_binarySearch(t *testing.T) {
-	maxWidth := float32(50)
+func TestText_lineBounds_small_firstWidth(t *testing.T) {
+	measurer := func(text []rune) fyne.Size {
+		return fyne.MeasureText(string(text), 14, fyne.TextStyle{})
+	}
+	richText := NewRichTextWithText("foobar")
+	richText.Wrapping = fyne.TextWrapWord
+	richText.Truncation = fyne.TextTruncateOff
+	got, _ := lineBounds(richText, richText.Segments[0], 0.1, fyne.NewSize(64, 20), measurer)
+	assert.Equal(t, 0, got[0].begin)
+	assert.Equal(t, 0, got[0].end)
+	assert.Equal(t, 0, got[1].begin)
+	assert.Equal(t, 6, got[1].end)
+}
+
+func TestText_howManyRunesFit(t *testing.T) {
+	maxWidth := float32(46)
 	textSize := float32(10)
 	textStyle := fyne.TextStyle{}
-	measurer := func(text []rune) float32 {
-		return fyne.MeasureText(string(text), textSize, textStyle).Width
+	measurer := func(text []rune) fyne.Size {
+		return fyne.MeasureText(string(text), textSize, textStyle)
 	}
+	charWidth := measurer([]rune("z")).Width
 	for name, tt := range map[string]struct {
 		text string
 		want int
@@ -837,13 +1302,16 @@ func TestText_binarySearch(t *testing.T) {
 			want: 0,
 		},
 	} {
-		checker := func(low int, high int) bool {
-			return measurer([]rune(tt.text[low:high])) <= maxWidth
-		}
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tt.want, binarySearch(checker, 0, len(tt.text)))
+			assert.Equal(t, tt.want, howManyRunesFit([]rune(tt.text), maxWidth, charWidth, measurer))
 		})
 	}
+	t.Run("Zero width", func(t *testing.T) {
+		assert.Equal(t, 0, howManyRunesFit([]rune("foo"), 0, charWidth, measurer))
+	})
+	t.Run("Negative width", func(t *testing.T) {
+		assert.Equal(t, 0, howManyRunesFit([]rune("foo"), -1, charWidth, measurer))
+	})
 }
 
 func TestText_findSpaceIndex(t *testing.T) {
@@ -853,7 +1321,7 @@ func TestText_findSpaceIndex(t *testing.T) {
 	}{
 		"no_space_fallback": {
 			text: "iiiiiiiiiimmmmmmmmmm",
-			want: 19,
+			want: -1,
 		},
 		"single_space": {
 			text: "foobar foobar",
@@ -866,6 +1334,10 @@ func TestText_findSpaceIndex(t *testing.T) {
 		"many_spaces": {
 			text: "ww wwww www wwwww",
 			want: 11,
+		},
+		"space beginning": {
+			text: " ww",
+			want: 0,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

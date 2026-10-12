@@ -1,12 +1,161 @@
 package binding
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"fyne.io/fyne/v2/storage"
 )
+
+type testItem struct {
+	word   string
+	number int
+}
+
+func testItemFormatter(a testItem) (string, error) {
+	return fmt.Sprintf("%s-%d", a.word, a.number), nil
+}
+
+func testItemComparator(a, b testItem) bool {
+	return a.word == b.word && a.number == b.number
+}
+
+func testItemParser(s string) (testItem, error) {
+	split := strings.Split(s, "-")
+	if len(split) != 2 {
+		return testItem{}, fmt.Errorf("invalid split count %d", len(split))
+	}
+
+	num, err := strconv.Atoi(split[1])
+	if err != nil {
+		return testItem{}, fmt.Errorf("error parsing number: %w", err)
+	}
+
+	return testItem{split[0], num}, nil
+}
+
+func BenchmarkBoolToString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		bo := NewBool()
+		s := BoolToString(bo)
+		s.Get()
+
+		bo.Set(true)
+		s.Get()
+
+		s.Set("trap")
+		bo.Get()
+
+		s.Set("false")
+		bo.Get()
+	}
+}
+
+func BenchmarkFloatToString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		f := NewFloat()
+		s := FloatToString(f)
+		s.Get()
+
+		f.Set(0.3)
+		s.Get()
+
+		s.Set("wrong")
+		f.Get()
+
+		s.Set("5.00")
+		f.Get()
+	}
+}
+
+func BenchmarkIntToString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		i := NewInt()
+		s := IntToString(i)
+		s.Get()
+
+		i.Set(3)
+		s.Get()
+
+		s.Set("wrong")
+		i.Get()
+
+		s.Set("5")
+		i.Get()
+	}
+}
+
+func BenchmarkItemtToString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		i := NewItem(testItemComparator)
+		s := ItemToString(i, testItemFormatter, testItemParser, testItemComparator)
+		s.Get()
+
+		i.Set(testItem{"test", 2})
+		s.Get()
+
+		s.Set("invalid-number")
+		i.Get()
+
+		s.Set("a-5")
+		i.Get()
+	}
+}
+
+func BenchmarkStringToBool(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		s := NewString()
+		b := StringToBool(s)
+		b.Get()
+
+		s.Set("true")
+		b.Get()
+
+		s.Set("trap") // bug in fmt.SScanf means "wrong" parses as "false"
+		b.Get()
+
+		b.Set(false)
+		s.Get()
+	}
+}
+
+func BenchmarkStringToFloat(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		s := NewString()
+		f := StringToFloat(s)
+		f.Get()
+
+		s.Set("3")
+		f.Get()
+
+		s.Set("wrong")
+		f.Get()
+
+		f.Set(5)
+		s.Get()
+	}
+}
+
+func BenchmarkStringToInt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		s := NewString()
+		i := StringToInt(s)
+		i.Get()
+
+		s.Set("3")
+		i.Get()
+
+		s.Set("wrong")
+		i.Get()
+
+		i.Set(5)
+		s.Get()
+	}
+}
 
 func TestBoolToString(t *testing.T) {
 	b := NewBool()
@@ -106,6 +255,19 @@ func TestFloatToStringWithFormat(t *testing.T) {
 	v2, err := f.Get()
 	assert.Nil(t, err)
 	assert.Equal(t, 5.0, v2)
+
+	f = NewFloat()
+	s = FloatToStringWithFormat(f, "%.f")
+	v, err = s.Get()
+	assert.NoError(t, err)
+	assert.Equal(t, "0", v)
+
+	err = s.Set("1.2")
+	assert.NoError(t, err)
+
+	v, err = s.Get()
+	assert.NoError(t, err)
+	assert.Equal(t, "1", v)
 }
 
 func TestIntToString(t *testing.T) {
@@ -362,4 +524,70 @@ func TestURIToString(t *testing.T) {
 	v2, err := u.Get()
 	assert.Nil(t, err)
 	assert.Equal(t, "file:///tmp/test.txt", v2.String())
+}
+
+func TestItemToString(t *testing.T) {
+	i := NewItem(testItemComparator)
+	s := ItemToString(i, testItemFormatter, testItemParser, testItemComparator)
+	v, err := s.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, "-0", v)
+
+	err = i.Set(testItem{"test", 2})
+	assert.Nil(t, err)
+	v, err = s.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, "test-2", v)
+
+	err = s.Set("invalid=-number")
+	assert.NotNil(t, err)
+	_, err = i.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, "test-2", v) // Value should not have changed
+
+	err = s.Set("a-5")
+	assert.Nil(t, err)
+	v2, err := i.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, testItem{"a", 5}, v2)
+}
+
+func TestFloatToInt(t *testing.T) {
+	f := NewFloat()
+	i := FloatToInt(f)
+	v, err := i.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 0, v)
+
+	err = f.Set(0.3)
+	assert.Nil(t, err)
+	v, err = i.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 0, v)
+
+	err = i.Set(5)
+	assert.Nil(t, err)
+	v2, err := f.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 5.0, v2)
+}
+
+func TestIntToFloat(t *testing.T) {
+	i := NewInt()
+	f := IntToFloat(i)
+	v, err := f.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 0.0, v)
+
+	err = i.Set(3)
+	assert.Nil(t, err)
+	v, err = f.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 3.0, v)
+
+	err = f.Set(5)
+	assert.Nil(t, err)
+	v2, err := i.Get()
+	assert.Nil(t, err)
+	assert.Equal(t, 5, v2)
 }

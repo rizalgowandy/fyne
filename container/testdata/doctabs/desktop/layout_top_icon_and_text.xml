@@ -4,23 +4,23 @@
 			<container size="150x36">
 				<widget size="110x36" type="*widget.Scroll">
 					<container size="110x36">
-						<widget size="105x36" type="*container.tabButton">
-							<text bold color="primary" pos="32,8" size="65x20">Text1</text>
+						<widget size="101x36" type="*container.tabButton">
+							<text bold color="primary" pos="32,8" size="61x20">Text1</text>
 							<image pos="8,8" rsc="cancelIcon" size="iconInlineSize" themed="primary"/>
 						</widget>
 					</container>
 				</widget>
 				<container pos="114,0" size="36x36">
 					<widget size="36x36" type="*widget.Button">
-						<rectangle fillColor="button" size="36x36"/>
-						<rectangle size="0x0"/>
-						<image fillMode="contain" pos="8,8" rsc="more-horizontal.svg" size="iconInlineSize" themed="default"/>
+						<rectangle radius="4" size="36x36"/>
+						<rectangle size="36x36"/>
+						<image fillMode="contain" pos="8,8" rsc="more-horizontal.svg" size="iconInlineSize" themed="foreground"/>
 					</widget>
 				</container>
 			</container>
-			<rectangle fillColor="shadow" pos="0,36" size="150x4"/>
-			<rectangle fillColor="primary" pos="0,36" size="105x4"/>
-			<circle fillColor="background" pos="0,40" size="150x109"/>
+			<rectangle fillColor="shadow" pos="0,36" size="150x1"/>
+			<rectangle fillColor="primary" pos="0,36" radius="4" size="101x1"/>
+			<circle fillColor="background" pos="0,40" size="150x110"/>
 		</widget>
 	</content>
 </canvas>

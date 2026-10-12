@@ -1,15 +1,18 @@
-// +build !mobile
+//go:build !mobile
 
 package widget_test
 
 import (
 	"image/color"
+	"runtime"
 	"testing"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/driver/desktop"
 	internalWidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/stretchr/testify/assert"
@@ -17,8 +20,7 @@ import (
 )
 
 func TestMenu_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(canvas.NewRectangle(color.Transparent))
 	defer w.Close()
@@ -30,20 +32,70 @@ func TestMenu_Layout(t *testing.T) {
 	sep := fyne.NewMenuItemSeparator()
 	item3 := fyne.NewMenuItem("C", nil)
 	subItem1 := fyne.NewMenuItem("subitem A", nil)
+	subItem1.Checked = true
 	subItem2 := fyne.NewMenuItem("subitem B", nil)
+	subItem2.Checked = true
+	subItem2.Icon = theme.InfoIcon()
 	subItem3 := fyne.NewMenuItem("subitem C (long)", nil)
+	subItem3.Icon = theme.MenuIcon()
 	subsubItem1 := fyne.NewMenuItem("subsubitem A (long)", nil)
+	subsubItem1.Icon = theme.FileIcon()
 	subsubItem2 := fyne.NewMenuItem("subsubitem B", nil)
 	subItem3.ChildMenu = fyne.NewMenu("", subsubItem1, subsubItem2)
 	item3.ChildMenu = fyne.NewMenu("", subItem1, subItem2, subItem3)
-	menu := fyne.NewMenu("", item1, sep, item2, item3)
+	item4 := fyne.NewMenuItem("D", nil)
+	subItem4a := fyne.NewMenuItem("a", nil)
+	subItem4a.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyA, Modifier: fyne.KeyModifierControl}
+	subItem4b := fyne.NewMenuItem("b", nil)
+	subItem4b.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyBackspace, Modifier: fyne.KeyModifierAlt}
+	subItem4c := fyne.NewMenuItem("c", nil)
+	subItem4c.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyDelete, Modifier: fyne.KeyModifierSuper}
+	subItem4d := fyne.NewMenuItem("d", nil)
+	subItem4d.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyDown, Modifier: fyne.KeyModifierShift}
+	subItem4e := fyne.NewMenuItem("e", nil)
+	subItem4e.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyEnd, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt}
+	subItem4f := fyne.NewMenuItem("f", nil)
+	subItem4f.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyEnter, Modifier: fyne.KeyModifierControl | fyne.KeyModifierSuper}
+	subItem4g := fyne.NewMenuItem("g", nil)
+	subItem4g.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyEscape, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift}
+	subItem4h := fyne.NewMenuItem("h", nil)
+	subItem4h.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyHome, Modifier: fyne.KeyModifierAlt | fyne.KeyModifierSuper}
+	subItem4i := fyne.NewMenuItem("i", nil)
+	subItem4i.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyLeft, Modifier: fyne.KeyModifierAlt | fyne.KeyModifierShift}
+	subItem4j := fyne.NewMenuItem("j", nil)
+	subItem4j.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyPageDown, Modifier: fyne.KeyModifierSuper | fyne.KeyModifierShift}
+	subItem4k := fyne.NewMenuItem("k", nil)
+	subItem4k.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyPageUp, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt | fyne.KeyModifierSuper}
+	subItem4l := fyne.NewMenuItem("l", nil)
+	subItem4l.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyReturn, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt | fyne.KeyModifierShift}
+	subItem4m := fyne.NewMenuItem("m", nil)
+	subItem4m.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyRight, Modifier: fyne.KeyModifierControl | fyne.KeyModifierSuper | fyne.KeyModifierShift}
+	subItem4n := fyne.NewMenuItem("n", nil)
+	subItem4n.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeySpace, Modifier: fyne.KeyModifierControl | fyne.KeyModifierAlt | fyne.KeyModifierSuper | fyne.KeyModifierShift}
+	subItem4o := fyne.NewMenuItem("o", nil)
+	subItem4o.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyTab, Modifier: fyne.KeyModifierControl}
+	subItem4p := fyne.NewMenuItem("p", nil)
+	subItem4p.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyUp, Modifier: fyne.KeyModifierControl}
+	subItem4q := fyne.NewMenuItem("q", nil)
+	subItem4q.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyF6}
+	item4.ChildMenu = fyne.NewMenu("", subItem4a, subItem4b, subItem4c, subItem4d, subItem4e, subItem4f, subItem4g, subItem4h, subItem4i, subItem4j, subItem4k, subItem4l, subItem4m, subItem4n, subItem4o, subItem4p, subItem4q)
+
+	menu := fyne.NewMenu("", item1, sep, item2, item3, sep, item4)
+
+	var shortcutsMasterPrefixPath string
+	if runtime.GOOS == "darwin" {
+		shortcutsMasterPrefixPath = "menu/desktop/layout_shortcuts_darwin"
+	} else {
+		shortcutsMasterPrefixPath = "menu/desktop/layout_shortcuts_other"
+	}
 
 	for name, tt := range map[string]struct {
-		windowSize     fyne.Size
-		menuPos        fyne.Position
-		mousePositions []fyne.Position
-		useTestTheme   bool
-		want           string
+		windowSize         fyne.Size
+		menuPos            fyne.Position
+		mousePositions     []fyne.Position
+		want               string
+		wantImage          string
+		wantTestThemeImage string
 	}{
 		"normal": {
 			windowSize: fyne.NewSize(500, 300),
@@ -54,8 +106,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(500, 300),
 			menuPos:    fyne.NewPos(10, 10),
 			mousePositions: []fyne.Position{
-				fyne.NewPos(30, 100),
-				fyne.NewPos(100, 170),
+				fyne.NewPos(32, 103),
+				fyne.NewPos(102, 173),
 			},
 			want: "menu/desktop/layout_normal_with_submenus.xml",
 		},
@@ -74,8 +126,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(500, 300),
 			menuPos:    fyne.NewPos(410, 10),
 			mousePositions: []fyne.Position{
-				fyne.NewPos(430, 100), // open submenu
-				fyne.NewPos(300, 170), // open subsubmenu
+				fyne.NewPos(432, 103), // open submenu
+				fyne.NewPos(302, 173), // open subsubmenu
 			},
 			want: "menu/desktop/layout_no_space_on_right.xml",
 		},
@@ -83,8 +135,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(200, 300),
 			menuPos:    fyne.NewPos(10, 10),
 			mousePositions: []fyne.Position{
-				fyne.NewPos(30, 100),  // open submenu
-				fyne.NewPos(100, 170), // open subsubmenu
+				fyne.NewPos(32, 103),  // open submenu
+				fyne.NewPos(102, 173), // open subsubmenu
 			},
 			want: "menu/desktop/layout_no_space_on_both_sides.xml",
 		},
@@ -98,18 +150,32 @@ func TestMenu_Layout(t *testing.T) {
 			want: "menu/desktop/layout_window_too_short_for_submenu.xml",
 		},
 		"theme change": {
-			windowSize:   fyne.NewSize(500, 300),
-			menuPos:      fyne.NewPos(10, 10),
-			useTestTheme: true,
-			want:         "menu/desktop/layout_theme_changed.xml",
+			windowSize:         fyne.NewSize(500, 300),
+			menuPos:            fyne.NewPos(10, 10),
+			want:               "menu/desktop/layout_theme_changed.xml",
+			wantImage:          "menu/desktop/layout_normal.png",
+			wantTestThemeImage: "menu/desktop/layout_theme_changed.png",
 		},
 		"window too short for menu": {
 			windowSize: fyne.NewSize(100, 50),
 			menuPos:    fyne.NewPos(10, 10),
 			want:       "menu/desktop/layout_window_too_short.xml",
 		},
+		"menu with shortcuts": {
+			windowSize: fyne.NewSize(450, 800),
+			menuPos:    fyne.NewPos(10, 10),
+			mousePositions: []fyne.Position{
+				fyne.NewPos(32, 143), // open submenu
+			},
+			want:               shortcutsMasterPrefixPath + ".xml",
+			wantImage:          shortcutsMasterPrefixPath + ".png",
+			wantTestThemeImage: shortcutsMasterPrefixPath + "_theme_changed.png",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if name == "menu with shortcuts" && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
+				return // macOS and Windows are off-by-a-fraction for symbol font TODO find out why
+			}
 			w.Resize(tt.windowSize)
 			m := widget.NewMenu(menu)
 			o := internalWidget.NewOverlayContainer(m, c, nil)
@@ -121,10 +187,12 @@ func TestMenu_Layout(t *testing.T) {
 				test.MoveMouse(c, pos)
 			}
 			test.AssertRendersToMarkup(t, tt.want, w.Canvas())
-			if tt.useTestTheme {
-				test.AssertImageMatches(t, "menu/layout_normal.png", c.Capture())
+			if tt.wantImage != "" {
+				test.AssertImageMatches(t, tt.wantImage, c.Capture())
+			}
+			if tt.wantTestThemeImage != "" {
 				test.WithTestTheme(t, func() {
-					test.AssertImageMatches(t, "menu/layout_theme_changed.png", c.Capture())
+					test.AssertImageMatches(t, tt.wantTestThemeImage, c.Capture())
 				})
 			}
 		})
@@ -132,15 +200,15 @@ func TestMenu_Layout(t *testing.T) {
 }
 
 func TestMenu_Scrolling(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(canvas.NewRectangle(color.Transparent))
 	defer w.Close()
 	w.SetPadded(false)
 	c := w.Canvas()
 
-	menu := fyne.NewMenu("",
+	menu := fyne.NewMenu(
+		"",
 		fyne.NewMenuItem("A", nil),
 		fyne.NewMenuItem("B", nil),
 		fyne.NewMenuItem("C", nil),
@@ -149,6 +217,7 @@ func TestMenu_Scrolling(t *testing.T) {
 		fyne.NewMenuItem("F", nil),
 	)
 
+	// 100x100
 	w.Resize(fyne.NewSize(100, 100))
 	m := widget.NewMenu(menu)
 	o := internalWidget.NewOverlayContainer(m, c, nil)
@@ -173,8 +242,7 @@ func TestMenu_Scrolling(t *testing.T) {
 }
 
 func TestMenu_TraverseMenu(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := fyne.CurrentApp().NewWindow("")
 	defer w.Close()
@@ -182,11 +250,13 @@ func TestMenu_TraverseMenu(t *testing.T) {
 	c := w.Canvas()
 
 	itemWithChild := fyne.NewMenuItem("Bar", nil)
-	itemWithChild.ChildMenu = fyne.NewMenu("",
+	itemWithChild.ChildMenu = fyne.NewMenu(
+		"",
 		fyne.NewMenuItem("SubA", nil),
 		fyne.NewMenuItem("SubB", nil),
 	)
-	m := widget.NewMenu(fyne.NewMenu("",
+	m := widget.NewMenu(fyne.NewMenu(
+		"",
 		fyne.NewMenuItem("Foo", nil),
 		fyne.NewMenuItemSeparator(),
 		itemWithChild,
@@ -194,7 +264,8 @@ func TestMenu_TraverseMenu(t *testing.T) {
 		fyne.NewMenuItem("Baz", nil),
 	))
 	w.SetContent(internalWidget.NewOverlayContainer(m, c, nil))
-	w.Resize(m.MinSize())
+	// + 4,5 for canvas’ safe area
+	w.Resize(m.MinSize().AddWidthHeight(4, 5))
 	m.Resize(m.MinSize())
 
 	// going all the way down …
@@ -251,56 +322,6 @@ func TestMenu_TraverseMenu(t *testing.T) {
 	test.AssertRendersToMarkup(t, "menu/desktop/traverse_second_active.xml", c, "does nothing if there is no submenu opened")
 }
 
-func TestMenu_RefreshOptions(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-
-	w := fyne.CurrentApp().NewWindow("")
-	defer w.Close()
-	w.SetPadded(false)
-	c := w.Canvas()
-
-	itemFoo := fyne.NewMenuItem("Foo", nil)
-	itemBar := fyne.NewMenuItem("Bar", nil)
-	itemBaz := fyne.NewMenuItem("Baz", nil)
-
-	m := widget.NewMenu(fyne.NewMenu("",
-		itemFoo,
-		fyne.NewMenuItemSeparator(),
-		itemBar,
-		fyne.NewMenuItemSeparator(),
-		itemBaz,
-	))
-	w.SetContent(internalWidget.NewOverlayContainer(m, c, nil))
-	w.Resize(m.MinSize())
-	m.Resize(m.MinSize())
-	test.AssertRendersToMarkup(t, "menu/desktop/refresh_initial.xml", c)
-
-	itemBar.Disabled = true
-	m.Refresh()
-
-	test.AssertRendersToMarkup(t, "menu/desktop/refresh_disabled.xml", c)
-
-	itemBaz.Checked = true
-	m.Refresh()
-
-	test.AssertRendersToMarkup(t, "menu/desktop/refresh_checkmark.xml", c)
-
-	itemBar.Checked = true
-	m.Refresh()
-
-	test.AssertRendersToMarkup(t, "menu/desktop/refresh_2nd_checkmark.xml", c)
-
-	itemBar.Checked = false
-	itemBar.Disabled = false
-	m.Refresh()
-
-	itemBaz.Checked = false
-	m.Refresh()
-
-	test.AssertRendersToMarkup(t, "menu/desktop/refresh_initial.xml", c)
-}
-
 func TestMenu_TriggerTraversedMenu(t *testing.T) {
 	var triggered string
 	var dismissed bool
@@ -308,12 +329,14 @@ func TestMenu_TriggerTraversedMenu(t *testing.T) {
 		triggered = ""
 		dismissed = false
 		itemWithChild := fyne.NewMenuItem("Bar", func() { triggered = "2nd" })
-		itemWithChild.ChildMenu = fyne.NewMenu("",
+		itemWithChild.ChildMenu = fyne.NewMenu(
+			"",
 			fyne.NewMenuItem("SubA", func() { triggered = "1st sub" }),
 			fyne.NewMenuItem("SubB", nil),
 			fyne.NewMenuItem("SubC", func() { triggered = "3rd sub" }),
 		)
-		m := widget.NewMenu(fyne.NewMenu("",
+		m := widget.NewMenu(fyne.NewMenu(
+			"",
 			fyne.NewMenuItem("Foo", func() { triggered = "1st" }),
 			fyne.NewMenuItemSeparator(),
 			itemWithChild,
@@ -322,6 +345,7 @@ func TestMenu_TriggerTraversedMenu(t *testing.T) {
 		))
 		m.OnDismiss = func() { dismissed = true }
 		w := fyne.CurrentApp().NewWindow("")
+		t.Cleanup(w.Close)
 		w.SetContent(internalWidget.NewOverlayContainer(m, w.Canvas(), nil))
 		return m
 	}

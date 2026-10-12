@@ -5,8 +5,10 @@ import (
 	"fyne.io/fyne/v2/internal/widget"
 )
 
-var _ fyne.Widget = (*PopUpMenu)(nil)
-var _ fyne.Focusable = (*PopUpMenu)(nil)
+var (
+	_ fyne.Widget    = (*PopUpMenu)(nil)
+	_ fyne.Focusable = (*PopUpMenu)(nil)
+)
 
 // PopUpMenu is a Menu which displays itself in an OverlayContainer.
 type PopUpMenu struct {
@@ -19,12 +21,17 @@ type PopUpMenu struct {
 //
 // Since: 2.0
 func NewPopUpMenu(menu *fyne.Menu, c fyne.Canvas) *PopUpMenu {
+	if c == nil {
+		return nil
+	}
 	m := &Menu{}
 	m.setMenu(menu)
 	p := &PopUpMenu{Menu: m, canvas: c}
 	p.ExtendBaseWidget(p)
-	p.Menu.Resize(p.Menu.MinSize())
-	p.Menu.customSized = true
+	p.Resize(p.MinSize())
+	p.customSized = true
+
+	p.Move(fyne.NewPos(10, 10)) // non-zero pos to get manual overlay, fixed on show
 	o := widget.NewOverlayContainer(p, c, p.Dismiss)
 	o.Resize(o.MinSize())
 	p.overlay = o
@@ -38,22 +45,29 @@ func NewPopUpMenu(menu *fyne.Menu, c fyne.Canvas) *PopUpMenu {
 // It will automatically be positioned at the provided location and shown as an overlay on the specified canvas.
 func ShowPopUpMenuAtPosition(menu *fyne.Menu, c fyne.Canvas, pos fyne.Position) {
 	m := NewPopUpMenu(menu, c)
+	if m == nil {
+		return
+	}
 	m.ShowAtPosition(pos)
 }
 
-// FocusGained is triggered when the object gained focus. For the pop-up menu it does nothing.
+// ShowPopUpMenuAtRelativePosition creates a PopUp menu populated with menu items from the passed menu structure.
+// It will automatically be positioned at the given position relative to stated object and shown as an overlay on the specified canvas.
 //
-// Implements: fyne.Focusable
+// Since 2.4
+func ShowPopUpMenuAtRelativePosition(menu *fyne.Menu, c fyne.Canvas, rel fyne.Position, to fyne.CanvasObject) {
+	withRelativePosition(rel, to, func(pos fyne.Position) {
+		ShowPopUpMenuAtPosition(menu, c, pos)
+	})
+}
+
+// FocusGained is triggered when the object gained focus. For the pop-up menu it does nothing.
 func (p *PopUpMenu) FocusGained() {}
 
 // FocusLost is triggered when the object lost focus. For the pop-up menu it does nothing.
-//
-// Implements: fyne.Focusable
 func (p *PopUpMenu) FocusLost() {}
 
 // Hide hides the pop-up menu.
-//
-// Implements: fyne.Widget
 func (p *PopUpMenu) Hide() {
 	p.overlay.Hide()
 	p.Menu.Hide()
@@ -61,30 +75,32 @@ func (p *PopUpMenu) Hide() {
 
 // Move moves the pop-up menu.
 // The position is absolute because pop-up menus are shown in an overlay which covers the whole canvas.
-//
-// Implements: fyne.Widget
 func (p *PopUpMenu) Move(pos fyne.Position) {
 	p.BaseWidget.Move(p.adjustedPosition(pos, p.Size()))
 }
 
 // Resize changes the size of the pop-up menu.
-//
-// Implements: fyne.Widget
 func (p *PopUpMenu) Resize(size fyne.Size) {
 	p.BaseWidget.Move(p.adjustedPosition(p.Position(), size))
 	p.Menu.Resize(size)
 }
 
-// Show makes the pop-up menu visible.
+// SetCanvas allows a popup menu to be re-used on a different canvas.
 //
-// Implements: fyne.Widget
-func (p *PopUpMenu) Show() {
-	p.Menu.alignment = p.alignment
-	p.Menu.Refresh()
+// Since: 2.8
+func (p *PopUpMenu) SetCanvas(c fyne.Canvas) {
+	p.canvas = c
+	p.overlay.SetCanvas(c)
+}
 
+// Show makes the pop-up menu visible.
+func (p *PopUpMenu) Show() {
+	p.Refresh()
 	p.overlay.Show()
 	p.Menu.Show()
-	p.canvas.Focus(p)
+	if !fyne.CurrentDevice().IsMobile() {
+		p.canvas.Focus(p)
+	}
 }
 
 // ShowAtPosition shows the pop-up menu at the specified position.
@@ -93,9 +109,14 @@ func (p *PopUpMenu) ShowAtPosition(pos fyne.Position) {
 	p.Show()
 }
 
-// TypedKey handles key events. It allows keyboard control of the pop-up menu.
+// ShowAtRelativePosition shows the pop-up menu at the position relative to given object.
 //
-// Implements: fyne.Focusable
+// Since 2.4
+func (p *PopUpMenu) ShowAtRelativePosition(rel fyne.Position, to fyne.CanvasObject) {
+	withRelativePosition(rel, to, p.ShowAtPosition)
+}
+
+// TypedKey handles key events. It allows keyboard control of the pop-up menu.
 func (p *PopUpMenu) TypedKey(e *fyne.KeyEvent) {
 	switch e.Name {
 	case fyne.KeyDown:
@@ -114,21 +135,20 @@ func (p *PopUpMenu) TypedKey(e *fyne.KeyEvent) {
 }
 
 // TypedRune handles text events. For pop-up menus this does nothing.
-//
-// Implements: fyne.Focusable
 func (p *PopUpMenu) TypedRune(rune) {}
 
 func (p *PopUpMenu) adjustedPosition(pos fyne.Position, size fyne.Size) fyne.Position {
 	x := pos.X
 	y := pos.Y
-	if x+size.Width > p.canvas.Size().Width {
-		x = p.canvas.Size().Width - size.Width
+	_, areaSize := p.canvas.InteractiveArea()
+	if x+size.Width > areaSize.Width {
+		x = areaSize.Width - size.Width
 		if x < 0 {
 			x = 0 // TODO here we may need a scroller as it's wider than our canvas
 		}
 	}
-	if y+size.Height > p.canvas.Size().Height {
-		y = p.canvas.Size().Height - size.Height
+	if y+size.Height > areaSize.Height {
+		y = areaSize.Height - size.Height
 		if y < 0 {
 			y = 0 // TODO here we may need a scroller as it's longer than our canvas
 		}

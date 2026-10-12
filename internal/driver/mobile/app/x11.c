@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build linux,!android
+//go:build (linux && !android) || freebsd || openbsd
 
 #include "_cgo_export.h"
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,6 +22,7 @@ new_window(Display *x_dpy, EGLDisplay e_dpy, int w, int h, EGLContext *ctx, EGLS
 		EGL_BLUE_SIZE, 8,
 		EGL_GREEN_SIZE, 8,
 		EGL_RED_SIZE, 8,
+		EGL_ALPHA_SIZE, 8,
 		EGL_DEPTH_SIZE, 16,
 		EGL_CONFIG_CAVEAT, EGL_NONE,
 		EGL_NONE
@@ -56,7 +58,8 @@ new_window(Display *x_dpy, EGLDisplay e_dpy, int w, int h, EGLContext *ctx, EGLS
 	}
 
 	attr.event_mask = StructureNotifyMask | ExposureMask |
-		ButtonPressMask | ButtonReleaseMask | ButtonMotionMask;
+		ButtonPressMask | ButtonReleaseMask | ButtonMotionMask |
+		KeyPressMask | KeyReleaseMask;
 	Window win = XCreateWindow(
 		x_dpy, root, 0, 0, w, h, 0, visInfo->depth, InputOutput,
 		visInfo->visual, CWColormap | CWEventMask, &attr);
@@ -110,7 +113,7 @@ createWindow(void) {
 		exit(1);
 	}
 	eglBindAPI(EGL_OPENGL_ES_API);
-	win = new_window(x_dpy, e_dpy, 600, 800, &e_ctx, &e_surf);
+	win = new_window(x_dpy, e_dpy, 500, 1000, &e_ctx, &e_surf);
 
 	wm_delete_window = XInternAtom(x_dpy, "WM_DELETE_WINDOW", True);
 	if (wm_delete_window != None) {
@@ -136,6 +139,50 @@ createWindow(void) {
 	}
 }
 
+static KeySym
+base_keysym(XKeyEvent *ke) {
+	// index 0 selects the unshifted column: a stable identity for the physical key
+	return XLookupKeysym(ke, 0);
+}
+
+static int
+keysym_to_rune(KeySym sym) {
+	if (sym >= 0x20 && sym <= 0x7e) {
+		return (int)sym; // ASCII
+	}
+	if (sym >= 0xa0 && sym <= 0xff) {
+		return (int)sym; // Latin-1
+	}
+	if (((unsigned long)sym & 0xff000000) == 0x01000000) {
+		return (int)(sym & 0x00ffffff); // Unicode-range keysym
+	}
+	return -1; // this key does not generate a character
+}
+
+static unsigned long
+modifiers_from_state(unsigned int state) {
+	// bit values match key.Modifiers in the mobile event/key package
+	return (unsigned long)
+		((state & ShiftMask ? 1 : 0) |
+		(state & ControlMask ? 2 : 0) |
+		(state & Mod1Mask ? 4 : 0) |
+		(state & Mod4Mask ? 8 : 0));
+}
+
+static void
+send_key(XKeyEvent *ke, int down) {
+	KeySym base = base_keysym(ke);
+	char buf[8];
+	KeySym eff = 0;
+	XLookupString(ke, buf, sizeof(buf), &eff, NULL); // keysym after shift/caps lock, etc.
+	int rune = keysym_to_rune(eff);
+	if (down) {
+		onKeyPress((long)base, (int)rune, (long)modifiers_from_state(ke->state));
+	} else {
+		onKeyRelease((long)base, (int)rune, (long)modifiers_from_state(ke->state));
+	}
+}
+
 void
 processEvents(void) {
 	while (XPending(x_dpy)) {
@@ -143,10 +190,18 @@ processEvents(void) {
 		XNextEvent(x_dpy, &ev);
 		switch (ev.type) {
 		case ButtonPress:
-			onTouchBegin((float)ev.xbutton.x, (float)ev.xbutton.y);
+			// the button is passed on so that the driver can ignore the ones
+			// that do not map to a touch, like the scroll wheel
+			onTouchBegin((float)ev.xbutton.x, (float)ev.xbutton.y, ev.xbutton.button);
 			break;
 		case ButtonRelease:
-			onTouchEnd((float)ev.xbutton.x, (float)ev.xbutton.y);
+			onTouchEnd((float)ev.xbutton.x, (float)ev.xbutton.y, ev.xbutton.button);
+			break;
+		case KeyPress:
+			send_key(&ev.xkey, 1);
+			break;
+		case KeyRelease:
+			send_key(&ev.xkey, 0);
 			break;
 		case MotionNotify:
 			onTouchMove((float)ev.xmotion.x, (float)ev.xmotion.y);

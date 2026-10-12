@@ -1,9 +1,12 @@
 package test
 
-import "fyne.io/fyne/v2"
+import (
+	"runtime"
 
-type device struct {
-}
+	"fyne.io/fyne/v2"
+)
+
+type device struct{}
 
 // Declare conformity with Device
 var _ fyne.Device = (*device)(nil)
@@ -22,4 +25,12 @@ func (d *device) SystemScale() float32 {
 
 func (d *device) SystemScaleForWindow(fyne.Window) float32 {
 	return 1
+}
+
+func (d *device) Locale() fyne.Locale {
+	return "en"
+}
+
+func (*device) IsBrowser() bool {
+	return runtime.GOARCH == "js" || runtime.GOOS == "js"
 }

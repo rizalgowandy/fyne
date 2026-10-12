@@ -2,19 +2,19 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
+//go:build ignore
 
 // Genarsc generates stripped down version of android.jar resources used
 // for validation of manifest entries.
 //
 // Requires ANDROID_HOME be set to the path of the Android SDK and the
 // current sdk platform installed that matches MinSDK.
-package binres
+package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 
 	"fyne.io/fyne/v2/cmd/fyne/internal/mobile/binres"
@@ -35,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := ioutil.WriteFile("arsc.go", []byte(fmt.Sprintf(tmpl, strconv.Quote(string(arsc)))), 0644); err != nil {
+	if err := os.WriteFile("arsc.go", []byte(fmt.Sprintf(tmpl, strconv.Quote(string(arsc)))), 0o644); err != nil {
 		log.Fatal(err)
 	}
 }

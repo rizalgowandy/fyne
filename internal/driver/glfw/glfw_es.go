@@ -1,9 +1,8 @@
-// +build gles arm arm64
-// +build !darwin
+//go:build (gles || arm || arm64) && !darwin && !wasm && !test_web_driver
 
 package glfw
 
-import "github.com/go-gl/glfw/v3.3/glfw"
+import "github.com/go-gl/glfw/v3.4/glfw"
 
 func initWindowHints() {
 	glfw.WindowHint(glfw.ClientAPI, glfw.OpenGLESAPI)

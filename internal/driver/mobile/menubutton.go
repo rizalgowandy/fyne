@@ -2,7 +2,7 @@ package mobile
 
 import (
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
+	fynecanvas "fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -20,14 +20,17 @@ func (w *window) newMenuButton(menu *fyne.MainMenu) *menuButton {
 }
 
 func (m *menuButton) CreateRenderer() fyne.WidgetRenderer {
-	return &menuButtonRenderer{btn: widget.NewButtonWithIcon("", theme.MenuIcon(), func() {
+	btn := widget.NewButtonWithIcon("", theme.MenuIcon(), func() {
 		m.win.canvas.showMenu(m.menu)
-	}), bg: canvas.NewRectangle(theme.BackgroundColor())}
+	})
+	bg := fynecanvas.NewRectangle(theme.Color(theme.ColorNameBackground))
+	return &menuButtonRenderer{btn: btn, bg: bg, objects: []fyne.CanvasObject{bg, btn}}
 }
 
 type menuButtonRenderer struct {
-	btn *widget.Button
-	bg  *canvas.Rectangle
+	btn     *widget.Button
+	bg      *fynecanvas.Rectangle
+	objects []fyne.CanvasObject
 }
 
 func (m *menuButtonRenderer) Destroy() {
@@ -44,9 +47,9 @@ func (m *menuButtonRenderer) MinSize() fyne.Size {
 }
 
 func (m *menuButtonRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{m.bg, m.btn}
+	return m.objects
 }
 
 func (m *menuButtonRenderer) Refresh() {
-	m.bg.FillColor = theme.BackgroundColor()
+	m.bg.FillColor = theme.Color(theme.ColorNameBackground)
 }

@@ -1,10 +1,18 @@
 package widget_test
 
 import (
+	"fmt"
+	"image"
+	"runtime/debug"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/driver/software"
+	"fyne.io/fyne/v2/internal/cache"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -17,32 +25,89 @@ import (
 func TestNewSelect(t *testing.T) {
 	combo := widget.NewSelect([]string{"1", "2"}, func(string) {})
 
-	assert.Equal(t, 2, len(combo.Options))
+	assert.Len(t, combo.Options, 2)
 	assert.Equal(t, "", combo.Selected)
 }
 
+func TestNewSelectWithData(t *testing.T) {
+	data := binding.NewString()
+	combo := widget.NewSelectWithData([]string{"1", "2", "3"}, data)
+
+	assert.Len(t, combo.Options, 3)
+	assert.Equal(t, "", combo.Selected)
+
+	err := data.Set("2")
+	assert.NoError(t, err)
+	waitForBinding()
+	assert.Equal(t, "2", combo.Selected)
+}
+
 func TestSelect_Align(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	sel := widget.NewSelect([]string{"Hi"}, func(string) {})
 	sel.Alignment = fyne.TextAlignCenter
-	w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+	w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 	defer w.Close()
 	w.Resize(fyne.NewSize(200, 150))
 	c := fyne.CurrentApp().Driver().CanvasForObject(sel)
 
 	test.Tap(sel)
-	test.AssertRendersToMarkup(t, "select/center.xml", c)
+	assertRendersToPlatformMarkup(t, "select/%s/center.xml", c)
 
 	sel.Alignment = fyne.TextAlignTrailing
 	sel.Refresh()
-	test.AssertRendersToMarkup(t, "select/trailing.xml", c)
+	assertRendersToPlatformMarkup(t, "select/%s/trailing.xml", c)
+}
+
+func TestSelect_Options(t *testing.T) {
+	s := widget.NewSelect([]string{"1", "2", "3"}, nil)
+	s.SetSelected("2")
+	assert.Equal(t, "2", s.Selected)
+
+	s.SetOptions([]string{"4", "5"})
+	assert.Equal(t, "2", s.Selected)
+	s.Selected = ""
+	assert.Equal(t, "", s.Selected)
+}
+
+func TestSelect_Binding(t *testing.T) {
+	s := widget.NewSelect([]string{"1", "2", "3"}, nil)
+	s.SetSelected("2")
+	assert.Equal(t, "2", s.Selected)
+	waitForBinding() // this time it is the de-echo before binding
+
+	str := binding.NewString()
+	s.Bind(str)
+	waitForBinding()
+	value, err := str.Get()
+	assert.NoError(t, err)
+	assert.Equal(t, "", value)
+	assert.Equal(t, "2", s.Selected) // no match to options, so keep previous value
+
+	err = str.Set("3")
+	assert.NoError(t, err)
+	waitForBinding()
+	assert.Equal(t, "3", s.Selected)
+
+	s.Unbind()
+	assert.Nil(t, s.OnChanged)
+	err = str.Set("1")
+	assert.NoError(t, err)
+	val1, err := str.Get()
+	assert.NoError(t, err)
+	assert.Equal(t, "1", val1)
+	assert.Equal(t, "3", s.Selected)
+
+	s.SetSelected("2")
+	val1, err = str.Get()
+	assert.NoError(t, err)
+	assert.Equal(t, "1", val1)
+	assert.Equal(t, "2", s.Selected)
 }
 
 func TestSelect_ChangeTheme(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	combo := widget.NewSelect([]string{"1", "2"}, func(s string) {})
 	w := test.NewWindow(combo)
@@ -52,13 +117,13 @@ func TestSelect_ChangeTheme(t *testing.T) {
 	combo.Move(fyne.NewPos(10, 10))
 	test.Tap(combo)
 
-	test.AssertImageMatches(t, "select/theme_initial.png", w.Canvas().Capture())
+	assertImageMatchesPlatform(t, "select/%s/theme_initial.png", w.Canvas().Capture())
 
 	test.WithTestTheme(t, func() {
 		combo.Resize(combo.MinSize())
 		combo.Refresh()
 		time.Sleep(100 * time.Millisecond)
-		test.AssertImageMatches(t, "select/theme_changed.png", w.Canvas().Capture())
+		assertImageMatchesPlatform(t, "select/%s/theme_changed.png", w.Canvas().Capture())
 	})
 }
 
@@ -86,12 +151,26 @@ func TestSelect_ClearSelected(t *testing.T) {
 	assert.Equal(t, optClear, triggeredValue)
 }
 
+func TestSelect_ClipValue(t *testing.T) {
+	combo := widget.NewSelect([]string{"some text", "more"}, func(string) {})
+	combo.SetSelected("some text")
+	combo.Resize(fyne.NewSize(90, 38))
+
+	r := cache.Renderer(combo)
+	text := r.Objects()[2].(*widget.RichText)
+	assert.Len(t, text.Segments, 1)
+	assert.Equal(t, "some text", text.Segments[0].(*widget.TextSegment).Text)
+
+	r2 := cache.Renderer(text)
+	assert.Len(t, r2.Objects(), 1)
+	assert.Equal(t, "some …", r2.Objects()[0].(*canvas.Text).Text)
+}
+
 func TestSelect_Disable(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	sel := widget.NewSelect([]string{"Hi"}, func(string) {})
-	w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+	w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 	defer w.Close()
 	w.Resize(fyne.NewSize(200, 150))
 	c := fyne.CurrentApp().Driver().CanvasForObject(sel)
@@ -125,18 +204,17 @@ func TestSelect_Enable(t *testing.T) {
 	c := fyne.CurrentApp().Driver().CanvasForObject(sel)
 	ovl := c.Overlays().Top()
 	if assert.NotNil(t, ovl, "pop-up for enabled Select") {
-		test.TapCanvas(c, ovl.Position().Add(fyne.NewPos(theme.Padding()*2, theme.Padding()*2)))
+		test.TapCanvas(c, ovl.Position().Add(fyne.NewPos(theme.InnerPadding(), theme.InnerPadding())))
 		assert.Equal(t, "Hi", selected, "Radio should have been re-enabled.")
 	}
 }
 
 func TestSelect_FocusRendering(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	t.Run("gain/lose focus", func(t *testing.T) {
 		sel := widget.NewSelect([]string{"Option A", "Option B", "Option C"}, nil)
-		w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+		w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 		defer w.Close()
 		w.Resize(fyne.NewSize(200, 150))
 
@@ -157,11 +235,11 @@ func TestSelect_FocusRendering(t *testing.T) {
 	})
 	t.Run("disable/enable focused", func(t *testing.T) {
 		sel := widget.NewSelect([]string{"Option A", "Option B", "Option C"}, nil)
-		w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+		w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 		defer w.Close()
 		w.Resize(fyne.NewSize(200, 150))
 
-		c := w.Canvas().(test.WindowlessCanvas)
+		c := w.Canvas().(software.WindowlessCanvas)
 		c.FocusNext()
 		test.AssertRendersToMarkup(t, "select/focus_focused_none_selected.xml", c)
 		sel.Disable()
@@ -172,31 +250,31 @@ func TestSelect_FocusRendering(t *testing.T) {
 }
 
 func TestSelect_KeyboardControl(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	t.Run("activate pop-up", func(t *testing.T) {
 		sel := widget.NewSelect([]string{"Option A", "Option B"}, nil)
-		w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+		w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 		defer w.Close()
 		w.Resize(fyne.NewSize(150, 200))
 		c := w.Canvas()
 		c.Focus(sel)
+		areaPos, _ := c.InteractiveArea()
 
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected.xml", c)
 		sel.TypedKey(&fyne.KeyEvent{Name: fyne.KeySpace})
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected_popup.xml", c)
-		test.TapCanvas(c, fyne.NewPos(0, 0))
+		test.TapCanvas(c, areaPos)
 
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected.xml", c)
 		sel.TypedKey(&fyne.KeyEvent{Name: fyne.KeyUp})
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected_popup.xml", c)
-		test.TapCanvas(c, fyne.NewPos(0, 0))
+		test.TapCanvas(c, areaPos)
 
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected.xml", c)
 		sel.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected_popup.xml", c)
-		test.TapCanvas(c, fyne.NewPos(0, 0))
+		test.TapCanvas(c, areaPos)
 
 		test.AssertRendersToMarkup(t, "select/kbdctrl_none_selected.xml", c)
 		sel.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
@@ -205,7 +283,7 @@ func TestSelect_KeyboardControl(t *testing.T) {
 
 	t.Run("traverse options without pop-up", func(t *testing.T) {
 		sel := widget.NewSelect([]string{"Option A", "Option B", "Option C"}, nil)
-		w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+		w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 		defer w.Close()
 		w.Resize(fyne.NewSize(150, 200))
 		c := w.Canvas()
@@ -241,7 +319,7 @@ func TestSelect_KeyboardControl(t *testing.T) {
 
 	t.Run("trying to traverse empty options without pop-up", func(t *testing.T) {
 		sel := widget.NewSelect([]string{}, nil)
-		w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), sel))
+		w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{sel}})
 		defer w.Close()
 		w.Resize(fyne.NewSize(150, 200))
 		c := w.Canvas()
@@ -265,8 +343,7 @@ func TestSelect_KeyboardControl(t *testing.T) {
 }
 
 func TestSelect_Move(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	combo := widget.NewSelect([]string{"1", "2"}, nil)
 	w := test.NewWindow(combo)
@@ -278,10 +355,10 @@ func TestSelect_Move(t *testing.T) {
 	test.AssertRendersToMarkup(t, "select/move_initial.xml", w.Canvas())
 
 	combo.Tapped(&fyne.PointEvent{})
-	test.AssertRendersToMarkup(t, "select/move_tapped.xml", w.Canvas())
+	assertRendersToPlatformMarkup(t, "select/%s/move_tapped.xml", w.Canvas())
 
 	combo.Move(fyne.NewPos(20, 20))
-	test.AssertRendersToMarkup(t, "select/move_moved.xml", w.Canvas())
+	assertRendersToPlatformMarkup(t, "select/%s/move_moved.xml", w.Canvas())
 }
 
 func TestSelect_PlaceHolder(t *testing.T) {
@@ -305,8 +382,7 @@ func TestSelect_SelectedIndex(t *testing.T) {
 }
 
 func TestSelect_SetSelected(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	var triggered bool
 	var triggeredValue string
@@ -314,7 +390,7 @@ func TestSelect_SetSelected(t *testing.T) {
 		triggered = true
 		triggeredValue = s
 	})
-	w := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), combo))
+	w := test.NewWindow(&fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{combo}})
 	defer w.Close()
 	w.Resize(fyne.NewSize(200, 150))
 
@@ -398,8 +474,7 @@ func TestSelect_SetSelectedIndex_Invalid(t *testing.T) {
 }
 
 func TestSelect_Tapped(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	combo := widget.NewSelect([]string{"1", "2"}, func(s string) {})
 	w := test.NewWindow(combo)
@@ -409,13 +484,12 @@ func TestSelect_Tapped(t *testing.T) {
 
 	test.Tap(combo)
 	canvas := fyne.CurrentApp().Driver().CanvasForObject(combo)
-	assert.Equal(t, 1, len(canvas.Overlays().List()))
-	test.AssertRendersToMarkup(t, "select/tapped.xml", w.Canvas())
+	assert.Len(t, canvas.Overlays().List(), 1)
+	assertRendersToPlatformMarkup(t, "select/%s/tapped.xml", w.Canvas())
 }
 
 func TestSelect_Tapped_Constrained(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	combo := widget.NewSelect([]string{"1", "2"}, func(s string) {})
 	w := test.NewWindow(combo)
@@ -426,13 +500,12 @@ func TestSelect_Tapped_Constrained(t *testing.T) {
 	canvas := w.Canvas()
 	combo.Move(fyne.NewPos(canvas.Size().Width-10, canvas.Size().Height-10))
 	test.Tap(combo)
-	assert.Equal(t, 1, len(canvas.Overlays().List()))
-	test.AssertRendersToMarkup(t, "select/tapped_constrained.xml", w.Canvas())
+	assert.Len(t, canvas.Overlays().List(), 1)
+	assertRendersToPlatformMarkup(t, "select/%s/tapped_constrained.xml", w.Canvas())
 }
 
 func TestSelect_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	for name, tt := range map[string]struct {
 		placeholder string
@@ -531,15 +604,101 @@ func TestSelect_Layout(t *testing.T) {
 				Selected:    tt.selected,
 			}
 
-			window := test.NewWindow(fyne.NewContainerWithLayout(layout.NewCenterLayout(), combo))
+			window := test.NewTempWindow(t, &fyne.Container{Layout: layout.NewCenterLayout(), Objects: []fyne.CanvasObject{combo}})
 			if tt.expanded {
 				test.Tap(combo)
 			}
 			window.Resize(combo.MinSize().Max(fyne.NewSize(150, 200)))
 
-			test.AssertRendersToMarkup(t, "select/layout_"+name+".xml", window.Canvas())
-
-			window.Close()
+			assertRendersToPlatformMarkup(t, "select/%s/layout_"+name+".xml", window.Canvas())
 		})
 	}
+}
+
+// nilCanvasDriver wraps a fyne.Driver and returns nil from CanvasForObject
+// for one specific target, simulating the state observed on the real GLFW
+// driver after a widget is detached from its window between event delivery
+// and popup creation (fyne-io/fyne#5965). The stock test driver always
+// returns the last window's canvas regardless of the queried object, so the
+// detach scenario cannot otherwise be reproduced under the unit test driver.
+type nilCanvasDriver struct {
+	fyne.Driver
+	target fyne.CanvasObject
+}
+
+func (d *nilCanvasDriver) CanvasForObject(o fyne.CanvasObject) fyne.Canvas {
+	if o == d.target {
+		return nil
+	}
+	return d.Driver.CanvasForObject(o)
+}
+
+func (d *nilCanvasDriver) AbsolutePositionForObject(o fyne.CanvasObject) fyne.Position {
+	if o == d.target {
+		return fyne.NewPos(0, 0)
+	}
+	return d.Driver.AbsolutePositionForObject(o)
+}
+
+type wrappedApp struct {
+	fyne.App
+	drv fyne.Driver
+}
+
+func (a *wrappedApp) Driver() fyne.Driver { return a.drv }
+
+// Repro for fyne-io/fyne#5965: Select.Tapped must not panic when the widget
+// was already detached from its canvas (a frequent outcome of SetContent /
+// container rebuilds while a tap is in flight on the real driver).
+//
+// Failure mode on main: Select.Tapped -> showPopUp -> NewPopUpMenu(menu, nil)
+// -> OverlayContainer.Resize -> overlayRenderer.MinSize() -> nil deref on
+// OverlayContainer.canvas.
+func TestSelect_Tapped_AfterCanvasDetach_DoesNotPanic(t *testing.T) {
+	baseApp := test.NewTempApp(t)
+
+	sel := widget.NewSelect([]string{"a", "b", "c"}, nil)
+	w := test.NewWindow(container.NewVBox(sel))
+	defer w.Close()
+	w.Resize(fyne.NewSize(200, 200))
+
+	require.NotNil(t, fyne.CurrentApp().Driver().CanvasForObject(sel),
+		"precondition: Select is attached to a canvas before detach")
+
+	shim := &wrappedApp{App: baseApp, drv: &nilCanvasDriver{
+		Driver: baseApp.Driver(),
+		target: fyne.CanvasObject(sel),
+	}}
+	fyne.SetCurrentApp(shim)
+	t.Cleanup(func() { fyne.SetCurrentApp(baseApp) })
+
+	require.Nil(t, fyne.CurrentApp().Driver().CanvasForObject(fyne.CanvasObject(sel)),
+		"precondition: Select sees nil canvas after detach")
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Select.Tapped panicked after canvas detach: %v\n%s", r, debug.Stack())
+		}
+	}()
+	sel.Tapped(&fyne.PointEvent{Position: fyne.NewPos(0, 0)})
+}
+
+func assertRendersToPlatformMarkup(t *testing.T, file string, c fyne.Canvas) {
+	platform := "desktop"
+	if fyne.CurrentDevice().IsMobile() {
+		platform = "mobile"
+	}
+
+	path := fmt.Sprintf(file, platform)
+	test.AssertRendersToMarkup(t, path, c)
+}
+
+func assertImageMatchesPlatform(t *testing.T, file string, i image.Image) {
+	platform := "desktop"
+	if fyne.CurrentDevice().IsMobile() {
+		platform = "mobile"
+	}
+
+	path := fmt.Sprintf(file, platform)
+	test.AssertImageMatches(t, path, i)
 }

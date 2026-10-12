@@ -9,18 +9,22 @@ import (
 func TestContainer_Add(t *testing.T) {
 	box := new(dummyObject)
 	container := NewContainerWithLayout(new(customLayout))
-	assert.Equal(t, 0, len(container.Objects))
+	assert.Empty(t, container.Objects)
 	assert.Equal(t, float32(10), container.MinSize().Width)
 	assert.Equal(t, float32(0), container.MinSize().Height)
 
 	container.Add(box)
-	assert.Equal(t, 1, len(container.Objects))
+	assert.Len(t, container.Objects, 1)
 	assert.Equal(t, float32(10), container.MinSize().Width)
 	assert.Equal(t, float32(10), container.MinSize().Height)
 
+	oldLength := len(container.Objects)
+	container.Add(nil)
+	assert.Len(t, container.Objects, oldLength)
+
 	box2 := new(dummyObject)
 	container.Add(box2)
-	assert.Equal(t, 2, len(container.Objects))
+	assert.Len(t, container.Objects, 2)
 	assert.Equal(t, float32(10), container.MinSize().Width)
 	assert.Equal(t, float32(20), container.MinSize().Height)
 	assert.Equal(t, float32(0), box2.Position().X)
@@ -90,16 +94,26 @@ func TestContainer_Remove(t *testing.T) {
 	box1 := new(dummyObject)
 	box2 := new(dummyObject)
 	container := NewContainerWithLayout(new(customLayout), box1, box2)
-	assert.Equal(t, 2, len(container.Objects))
+	assert.Len(t, container.Objects, 2)
 	assert.Equal(t, float32(10), container.MinSize().Width)
 	assert.Equal(t, float32(20), container.MinSize().Height)
 
 	container.Remove(box1)
-	assert.Equal(t, 1, len(container.Objects))
+	assert.Len(t, container.Objects, 1)
 	assert.Equal(t, float32(10), container.MinSize().Width)
 	assert.Equal(t, float32(10), container.MinSize().Height)
 	assert.Equal(t, float32(0), box2.Position().X)
 	assert.Equal(t, float32(0), box2.Position().Y)
+}
+
+func TestContainer_RemoveAll(t *testing.T) {
+	box1 := new(dummyObject)
+	box2 := new(dummyObject)
+	container := NewContainerWithLayout(new(customLayout), box1, box2)
+	assert.Len(t, container.Objects, 2)
+
+	container.RemoveAll()
+	assert.Empty(t, container.Objects)
 }
 
 func TestContainer_Show(t *testing.T) {
@@ -115,8 +129,7 @@ func TestContainer_Show(t *testing.T) {
 	assert.True(t, container.Visible())
 }
 
-type customLayout struct {
-}
+type customLayout struct{}
 
 func (c *customLayout) Layout(objs []CanvasObject, size Size) {
 	y := float32(0)
@@ -137,37 +150,37 @@ type dummyObject struct {
 	hidden bool
 }
 
-func (d *dummyObject) Size() Size {
-	return d.size
-}
-
-func (d *dummyObject) Resize(size Size) {
-	d.size = size
-}
-
-func (d *dummyObject) Position() Position {
-	return d.pos
-}
-
-func (d *dummyObject) Move(pos Position) {
-	d.pos = pos
+func (d *dummyObject) Hide() {
+	d.hidden = true
 }
 
 func (d *dummyObject) MinSize() Size {
 	return NewSize(5, 5)
 }
 
-func (d *dummyObject) Visible() bool {
-	return !d.hidden
+func (d *dummyObject) Move(pos Position) {
+	d.pos = pos
+}
+
+func (d *dummyObject) Position() Position {
+	return d.pos
+}
+
+func (d *dummyObject) Refresh() {
+}
+
+func (d *dummyObject) Resize(size Size) {
+	d.size = size
 }
 
 func (d *dummyObject) Show() {
 	d.hidden = false
 }
 
-func (d *dummyObject) Hide() {
-	d.hidden = true
+func (d *dummyObject) Size() Size {
+	return d.size
 }
 
-func (d *dummyObject) Refresh() {
+func (d *dummyObject) Visible() bool {
+	return !d.hidden
 }

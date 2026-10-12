@@ -2,34 +2,48 @@ package cache
 
 import (
 	"os"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
 )
 
 var (
-	cacheDuration     = 1 * time.Minute
-	cleanTaskInterval = cacheDuration / 2
+	ValidDuration     = 1 * time.Minute
+	cleanTaskInterval = ValidDuration / 2
 
-	expiredObjects                = make([]fyne.CanvasObject, 0, 50)
 	lastClean                     time.Time
 	skippedCleanWithCanvasRefresh = false
 
+	// cachedNow is the clock sample setAlive uses. Reading the real clock there
+	// is an expensive operation and setAlive is called per-object per paint.
+	// cachedNow is updated on Clean, which should be called once per frame.
+	// Atomic because tests (and Resize/Refresh from goroutines in non-migrated apps)
+	// reach setAlive off the main thread while the draw loop is in Clean.
+	cachedNow atomic.Int64
+
 	// testing purpose only
-	timeNow func() time.Time = time.Now
+	timeNow = time.Now
 )
 
 func init() {
 	if t, err := time.ParseDuration(os.Getenv("FYNE_CACHE")); err == nil {
-		cacheDuration = t
-		cleanTaskInterval = cacheDuration / 2
+		ValidDuration = t
+		cleanTaskInterval = ValidDuration / 2
 	}
+	refreshNow()
+}
+
+// refreshNow samples the clock for setAlive and returns the sample.
+func refreshNow() time.Time {
+	now := timeNow()
+	cachedNow.Store(now.UnixNano())
+	return now
 }
 
 // Clean run cache clean task, it should be called on paint events.
 func Clean(canvasRefreshed bool) {
-	now := timeNow()
+	now := refreshNow()
 	// do not run clean task too fast
 	if now.Sub(lastClean) < 10*time.Second {
 		if canvasRefreshed {
@@ -45,6 +59,8 @@ func Clean(canvasRefreshed bool) {
 		return
 	}
 	destroyExpiredSvgs(now)
+	destroyExpiredFontMetrics(now)
+	destroyExpiredBlurKernels(now)
 	if canvasRefreshed {
 		// Destroy renderers on canvas refresh to avoid flickering screen.
 		destroyExpiredRenderers(now)
@@ -52,131 +68,72 @@ func Clean(canvasRefreshed bool) {
 		// be a way to recover them later
 		destroyExpiredCanvases(now)
 	}
-	lastClean = timeNow()
+	lastClean = refreshNow()
 }
 
 // CleanCanvas performs a complete remove of all the objects that belong to the specified
 // canvas. Usually used to free all objects from a closing windows.
 func CleanCanvas(canvas fyne.Canvas) {
-	deletingObjs := make([]fyne.CanvasObject, 0, 50)
-
-	canvasesLock.RLock()
-	for obj, cinfo := range canvases {
-		if cinfo.canvas == canvas {
-			deletingObjs = append(deletingObjs, obj)
+	canvases.Range(func(obj fyne.CanvasObject, cinfo *canvasInfo) bool {
+		if cinfo.canvas != canvas {
+			return true
 		}
-	}
-	canvasesLock.RUnlock()
-	if len(deletingObjs) == 0 {
-		return
-	}
 
-	canvasesLock.Lock()
-	for _, dobj := range deletingObjs {
-		delete(canvases, dobj)
-	}
-	canvasesLock.Unlock()
+		canvases.Delete(obj)
 
-	renderersLock.Lock()
-	for _, dobj := range deletingObjs {
-		wid, ok := dobj.(fyne.Widget)
+		wid, ok := obj.(fyne.Widget)
 		if !ok {
-			continue
+			return true
 		}
-		winfo, ok := renderers[wid]
+		rinfo, ok := renderers.LoadAndDelete(wid)
 		if !ok {
-			continue
+			return true
 		}
-		winfo.renderer.Destroy()
-		delete(renderers, wid)
-	}
-	renderersLock.Unlock()
+		rinfo.renderer.Destroy()
+		overrides.Delete(wid)
+		return true
+	})
 }
 
 // ResetThemeCaches clears all the svg and text size cache maps
 func ResetThemeCaches() {
-	svgLock.Lock()
-	svgs = make(map[string]*svgInfo)
-	svgLock.Unlock()
-
-	fontSizeLock.Lock()
-	fontSizeCache = map[fontSizeEntry]fontMetric{}
-	fontSizeLock.Unlock()
+	svgs.Clear()
+	fontSizeCache.Clear()
 }
 
 // destroyExpiredCanvases deletes objects from the canvases cache.
 func destroyExpiredCanvases(now time.Time) {
-	expiredObjects = expiredObjects[:0]
-	canvasesLock.RLock()
-	for obj, cinfo := range canvases {
+	canvases.Range(func(obj fyne.CanvasObject, cinfo *canvasInfo) bool {
 		if cinfo.isExpired(now) {
-			expiredObjects = append(expiredObjects, obj)
+			canvases.Delete(obj)
 		}
-	}
-	canvasesLock.RUnlock()
-	if len(expiredObjects) > 0 {
-		canvasesLock.Lock()
-		for i, exp := range expiredObjects {
-			delete(canvases, exp)
-			expiredObjects[i] = nil
-		}
-		canvasesLock.Unlock()
-	}
+		return true
+	})
 }
 
 // destroyExpiredRenderers deletes the renderer from the cache and calls
 // renderer.Destroy()
 func destroyExpiredRenderers(now time.Time) {
-	expiredObjects = expiredObjects[:0]
-	renderersLock.RLock()
-	for wid, rinfo := range renderers {
+	renderers.Range(func(wid fyne.Widget, rinfo *rendererInfo) bool {
 		if rinfo.isExpired(now) {
 			rinfo.renderer.Destroy()
-			expiredObjects = append(expiredObjects, wid)
+			overrides.Delete(wid)
+			renderers.Delete(wid)
 		}
-	}
-	renderersLock.RUnlock()
-	if len(expiredObjects) > 0 {
-		renderersLock.Lock()
-		for i, exp := range expiredObjects {
-			delete(renderers, exp.(fyne.Widget))
-			expiredObjects[i] = nil
-		}
-		renderersLock.Unlock()
-	}
+		return true
+	})
 }
 
 type expiringCache struct {
-	expireLock sync.RWMutex
-	expires    time.Time
+	expires int64 // unix nanos, so setAlive is a load and an add
 }
 
 // isExpired check if the cache data is expired.
 func (c *expiringCache) isExpired(now time.Time) bool {
-	c.expireLock.RLock()
-	defer c.expireLock.RUnlock()
-	return c.expires.Before(now)
+	return c.expires < now.UnixNano()
 }
 
 // setAlive updates expiration time.
 func (c *expiringCache) setAlive() {
-	t := timeNow().Add(cacheDuration)
-	c.expireLock.Lock()
-	c.expires = t
-	c.expireLock.Unlock()
-}
-
-type expiringCacheNoLock struct {
-	expires time.Time
-}
-
-// isExpired check if the cache data is expired.
-func (c *expiringCacheNoLock) isExpired(now time.Time) bool {
-	return c.expires.Before(now)
-}
-
-// setAlive updates expiration time.
-func (c *expiringCacheNoLock) setAlive() {
-	t := timeNow().Add(cacheDuration)
-	c.expires = t
+	c.expires = cachedNow.Load() + ValidDuration.Nanoseconds()
 }

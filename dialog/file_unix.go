@@ -1,4 +1,4 @@
-// +build !windows,!android,!ios
+//go:build !windows && !android && !ios && !wasm && !js
 
 package dialog
 
@@ -11,12 +11,12 @@ import (
 )
 
 func (f *fileDialog) getPlaces() []favoriteItem {
-	lister, err := storage.ListerForURI(storage.NewURI("file:///"))
+	lister, err := storage.ListerForURI(storage.NewFileURI("/"))
 	if err != nil {
 		fyne.LogError("could not create lister for /", err)
 		return []favoriteItem{}
 	}
-	return []favoriteItem{favoriteItem{
+	return []favoriteItem{{
 		"Computer",
 		theme.ComputerIcon(),
 		lister,
@@ -28,19 +28,11 @@ func isHidden(file fyne.URI) bool {
 		fyne.LogError("Cannot check if non file is hidden", nil)
 		return false
 	}
-	path := file.String()[len(file.Scheme())+3:]
-	name := filepath.Base(path)
+
+	name := filepath.Base(file.Path())
 	return name == "" || name[0] == '.'
 }
 
-func hideFile(filename string) error {
+func hideFile(_ string) error {
 	return nil
-}
-
-func fileOpenOSOverride(*FileDialog) bool {
-	return false
-}
-
-func fileSaveOSOverride(*FileDialog) bool {
-	return false
 }

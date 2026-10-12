@@ -9,9 +9,20 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/internal/cache"
+	intWidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 )
+
+func clickPrimary(e *Entry, ev *fyne.PointEvent) {
+	mouseEvent := &desktop.MouseEvent{
+		PointEvent: *ev,
+		Button:     desktop.MouseButtonPrimary,
+	}
+	e.MouseDown(mouseEvent)
+	e.MouseUp(mouseEvent)
+	e.Tapped(ev) // in the glfw driver there is a double click delay before Tapped()
+}
 
 func TestEntry_Cursor(t *testing.T) {
 	entry := NewEntry()
@@ -21,26 +32,29 @@ func TestEntry_Cursor(t *testing.T) {
 func TestEntry_DoubleTapped(t *testing.T) {
 	entry := NewEntry()
 	entry.Wrapping = fyne.TextWrapOff
+	entry.Scroll = intWidget.ScrollNone
 	entry.SetText("The quick brown fox\njumped    over the lazy dog\n")
 	entry.Resize(entry.MinSize())
 
 	// select the word 'quick'
 	ev := getClickPosition("The qui", 0)
-	entry.Tapped(ev)
+	clickPrimary(entry, ev)
 	entry.DoubleTapped(ev)
 	assert.Equal(t, "quick", entry.SelectedText())
 
+	entry.sel.doubleTappedAtUnixMillis = 0 // make sure we don't register a triple tap next
+
 	// select the whitespace after 'quick'
 	ev = getClickPosition("The quick", 0)
-	// add half a ' ' character
-	ev.Position.X += fyne.MeasureText(" ", theme.TextSize(), fyne.TextStyle{}).Width / 2
-	entry.Tapped(ev)
+	clickPrimary(entry, ev)
 	entry.DoubleTapped(ev)
 	assert.Equal(t, " ", entry.SelectedText())
 
+	entry.sel.doubleTappedAtUnixMillis = 0
+
 	// select all whitespace after 'jumped'
 	ev = getClickPosition("jumped  ", 1)
-	entry.Tapped(ev)
+	clickPrimary(entry, ev)
 	entry.DoubleTapped(ev)
 	assert.Equal(t, "    ", entry.SelectedText())
 }
@@ -56,13 +70,14 @@ func TestEntry_DoubleTapped_AfterCol(t *testing.T) {
 	entry.Resize(entry.MinSize())
 	c := window.Canvas()
 
-	test.Tap(entry)
+	ev := getClickPosition("", 0)
+	clickPrimary(entry, ev)
 	assert.Equal(t, entry, c.Focused())
 
 	testCharSize := theme.TextSize()
 	pos := fyne.NewPos(testCharSize, testCharSize*4) // tap below rows
-	ev := &fyne.PointEvent{Position: pos}
-	entry.Tapped(ev)
+	ev = &fyne.PointEvent{Position: pos}
+	clickPrimary(entry, ev)
 	entry.DoubleTapped(ev)
 
 	assert.Equal(t, "", entry.SelectedText())
@@ -71,6 +86,7 @@ func TestEntry_DoubleTapped_AfterCol(t *testing.T) {
 func TestEntry_DragSelect(t *testing.T) {
 	entry := NewEntry()
 	entry.Wrapping = fyne.TextWrapOff
+	entry.Scroll = intWidget.ScrollNone
 	entry.SetText("The quick brown fox jumped\nover the lazy dog\nThe quick\nbrown fox\njumped over the lazy dog\n")
 	entry.Resize(entry.MinSize())
 
@@ -78,8 +94,6 @@ func TestEntry_DragSelect(t *testing.T) {
 	ev1 := getClickPosition("ove", 1)
 	// get position after the letter 'z' on the second row
 	ev2 := getClickPosition("over the laz", 1)
-	// add a couple of pixels, this is currently a workaround for weird mouse to column logic on text with kerning
-	ev2.Position.X += 2
 
 	// mouse down and drag from 'r' to 'z'
 	me := &desktop.MouseEvent{PointEvent: *ev1, Button: desktop.MouseButtonPrimary}
@@ -89,6 +103,32 @@ func TestEntry_DragSelect(t *testing.T) {
 		entry.Dragged(de)
 	}
 	me = &desktop.MouseEvent{PointEvent: *ev1, Button: desktop.MouseButtonPrimary}
+	entry.MouseUp(me)
+
+	assert.Equal(t, "r the laz", entry.SelectedText())
+}
+
+func TestEntry_DragSelectLargeStep(t *testing.T) {
+	entry := NewEntry()
+	entry.Wrapping = fyne.TextWrapOff
+	entry.Scroll = intWidget.ScrollNone
+	entry.SetText("The quick brown fox jumped\nover the lazy dog\nThe quick\nbrown fox\njumped over the lazy dog\n")
+	entry.Resize(entry.MinSize())
+
+	// get position after the letter 'e' on the second row
+	ev1 := getClickPosition("ove", 1)
+	// get position after the letter 'z' on the second row
+	ev2 := getClickPosition("over the laz", 1)
+
+	// mouse down and drag from 'r' to 'z'
+	me := &desktop.MouseEvent{PointEvent: *ev1, Button: desktop.MouseButtonPrimary}
+	entry.MouseDown(me)
+
+	delta := ev2.Position.Subtract(ev1.Position)
+	de := &fyne.DragEvent{PointEvent: *ev2, Dragged: fyne.NewDelta(delta.X, delta.Y)}
+	entry.Dragged(de)
+
+	me = &desktop.MouseEvent{PointEvent: *ev2, Button: desktop.MouseButtonPrimary}
 	entry.MouseUp(me)
 
 	assert.Equal(t, "r the laz", entry.SelectedText())
@@ -107,15 +147,11 @@ func TestEntry_DragSelectEmpty(t *testing.T) {
 	de = &fyne.DragEvent{PointEvent: *ev1, Dragged: fyne.NewDelta(1, 0)}
 	entry.Dragged(de)
 
-	entry.propertyLock.RLock()
-	assert.True(t, entry.selecting)
-	entry.propertyLock.RUnlock()
+	assert.True(t, entry.sel.selecting)
 
 	entry.DragEnd()
 	assert.Equal(t, "", entry.SelectedText())
-	entry.propertyLock.RLock()
-	assert.False(t, entry.selecting)
-	entry.propertyLock.RUnlock()
+	assert.False(t, entry.sel.selecting)
 
 	// Test non-empty selection - drag from 'T' to 'g' (empty)
 	ev1 = getClickPosition("", 0)
@@ -124,15 +160,11 @@ func TestEntry_DragSelectEmpty(t *testing.T) {
 	de = &fyne.DragEvent{PointEvent: *ev2, Dragged: fyne.NewDelta(1, 0)}
 	entry.Dragged(de)
 
-	entry.propertyLock.RLock()
-	assert.True(t, entry.selecting)
-	entry.propertyLock.RUnlock()
+	assert.True(t, entry.sel.selecting)
 
 	entry.DragEnd()
 	assert.Equal(t, "Testing", entry.SelectedText())
-	entry.propertyLock.RLock()
-	assert.True(t, entry.selecting)
-	entry.propertyLock.RUnlock()
+	assert.True(t, entry.sel.selecting)
 }
 
 func TestEntry_DragSelectWithScroll(t *testing.T) {
@@ -161,46 +193,50 @@ func TestEntry_ExpandSelectionForDoubleTap(t *testing.T) {
 	str := []rune(" fish 日本語日  \t  test 本日本 moose  \t")
 
 	// select invalid (before start)
-	start, end := getTextWhitespaceRegion(str, -1)
+	start, end := getTextWhitespaceRegion(str, -1, false)
 	assert.Equal(t, -1, start)
 	assert.Equal(t, -1, end)
 
 	// select whitespace at the end of text
-	start, end = getTextWhitespaceRegion(str, len(str))
+	start, end = getTextWhitespaceRegion(str, len(str), false)
 	assert.Equal(t, 29, start)
 	assert.Equal(t, 32, end)
-	start, end = getTextWhitespaceRegion(str, len(str)+100)
+	start, end = getTextWhitespaceRegion(str, len(str)+100, false)
 	assert.Equal(t, 29, start)
 	assert.Equal(t, 32, end)
 
 	// select the whitespace
-	start, end = getTextWhitespaceRegion(str, 0)
+	start, end = getTextWhitespaceRegion(str, 0, false)
 	assert.Equal(t, 0, start)
 	assert.Equal(t, 1, end)
+	// select the whitespace - grab adjacent words
+	start, end = getTextWhitespaceRegion(str, 0, true)
+	assert.Equal(t, 0, start)
+	assert.Equal(t, 5, end)
 
 	// select "fish"
-	start, end = getTextWhitespaceRegion(str, 1)
+	start, end = getTextWhitespaceRegion(str, 1, false)
 	assert.Equal(t, 1, start)
 	assert.Equal(t, 5, end)
-	start, end = getTextWhitespaceRegion(str, 4)
+	start, end = getTextWhitespaceRegion(str, 4, false)
 	assert.Equal(t, 1, start)
 	assert.Equal(t, 5, end)
 
 	// select "日本語日"
-	start, end = getTextWhitespaceRegion(str, 6)
+	start, end = getTextWhitespaceRegion(str, 7, false)
 	assert.Equal(t, 6, start)
 	assert.Equal(t, 10, end)
-	start, end = getTextWhitespaceRegion(str, 9)
+	start, end = getTextWhitespaceRegion(str, 9, false)
 	assert.Equal(t, 6, start)
 	assert.Equal(t, 10, end)
 
 	// select "  \t  "
-	start, end = getTextWhitespaceRegion(str, 10)
+	start, end = getTextWhitespaceRegion(str, 10, false)
 	assert.Equal(t, 10, start)
 	assert.Equal(t, 15, end)
 
 	// select "  \t"
-	start, end = getTextWhitespaceRegion(str, 30)
+	start, end = getTextWhitespaceRegion(str, 30, false)
 	assert.Equal(t, 29, start)
 	assert.Equal(t, len(str), end)
 }
@@ -208,13 +244,13 @@ func TestEntry_ExpandSelectionForDoubleTap(t *testing.T) {
 func TestEntry_ExpandSelectionWithWordSeparators(t *testing.T) {
 	// select "is_a"
 	str := []rune("This-is_a-test")
-	start, end := getTextWhitespaceRegion(str, 6)
+	start, end := getTextWhitespaceRegion(str, 6, false)
 	assert.Equal(t, 5, start)
 	assert.Equal(t, 9, end)
 }
 
 func TestEntry_EraseSelection(t *testing.T) {
-	// Selects "sti" on line 2 of a new multiline
+	// Selects "sti" on border 2 of a new multiline
 	// T e s t i n g
 	// T e[s t i]n g
 	// T e s t i n g
@@ -222,11 +258,12 @@ func TestEntry_EraseSelection(t *testing.T) {
 	e.SetText("Testing\nTesting\nTesting")
 	e.CursorRow = 1
 	e.CursorColumn = 2
-	var keyDown = func(key *fyne.KeyEvent) {
+	e.sel.cursorRow, e.sel.cursorRow = e.CursorRow, e.CursorColumn
+	keyDown := func(key *fyne.KeyEvent) {
 		e.KeyDown(key)
 		e.TypedKey(key)
 	}
-	var keyPress = func(key *fyne.KeyEvent) {
+	keyPress := func(key *fyne.KeyEvent) {
 		keyDown(key)
 		e.KeyUp(key)
 	}
@@ -235,12 +272,45 @@ func TestEntry_EraseSelection(t *testing.T) {
 	keyPress(&fyne.KeyEvent{Name: fyne.KeyRight})
 	keyPress(&fyne.KeyEvent{Name: fyne.KeyRight})
 
-	e.eraseSelection()
-	e.updateText(e.textProvider().String())
+	_ = e.Theme()
+	e.eraseSelectionAndUpdate()
+	e.updateText(e.textProvider().String(), false)
 	assert.Equal(t, "Testing\nTeng\nTesting", e.Text)
-	a, b := e.selection()
+	a, b := e.sel.selection()
 	assert.Equal(t, -1, a)
 	assert.Equal(t, -1, b)
+}
+
+func TestEntry_CallbackLocking(t *testing.T) {
+	e := &Entry{}
+	called := 0
+	e.OnChanged = func(_ string) {
+		called++ // Just to not have an empty critical section.
+	}
+
+	_ = e.Theme()
+	test.Type(e, "abc123")
+	e.selectAll()
+	e.TypedKey(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	assert.Equal(t, 7, called)
+}
+
+func TestEntry_ContentSizeAndPlacementWithIcon(t *testing.T) {
+	entry := NewEntry()
+	entry.SetIcon(theme.MailComposeIcon())
+	entry.SetText("SomeText")
+	renderer := entry.CreateRenderer()
+	contentPos := fyne.NewPos(theme.LineSpacing()+theme.IconInlineSize(), theme.InputBorderSize())
+
+	renderer.Layout(entry.MinSize())
+	// Scrollable content should be positioned after the icon, with correct padding
+	assert.Equal(t, contentPos, entry.scroll.Position())
+
+	entry.Wrapping = fyne.TextWrapOff
+	entry.Scroll = fyne.ScrollNone
+	renderer.Layout(entry.MinSize())
+	// Content should be positioned after the icon, with correct padding
+	assert.Equal(t, contentPos, entry.content.Position())
 }
 
 func TestEntry_MouseClickAndDragOutsideText(t *testing.T) {
@@ -256,7 +326,7 @@ func TestEntry_MouseClickAndDragOutsideText(t *testing.T) {
 	de := &fyne.DragEvent{PointEvent: *ev, Dragged: fyne.NewDelta(1, 0)}
 	entry.Dragged(de)
 	entry.MouseUp(me)
-	assert.False(t, entry.selecting)
+	assert.False(t, entry.sel.selecting)
 }
 
 func TestEntry_MouseDownOnSelect(t *testing.T) {
@@ -285,11 +355,12 @@ func TestEntry_PasteFromClipboard(t *testing.T) {
 	entry := NewEntry()
 
 	w := test.NewApp().NewWindow("")
+	defer w.Close()
 	w.SetContent(entry)
 
 	testContent := "test"
 
-	clipboard := fyne.CurrentApp().Driver().AllWindows()[0].Clipboard()
+	clipboard := fyne.CurrentApp().Clipboard()
 	clipboard.SetContent(testContent)
 
 	entry.pasteFromClipboard(clipboard)
@@ -302,6 +373,7 @@ func TestEntry_PasteFromClipboard_MultilineWrapping(t *testing.T) {
 	entry.Wrapping = fyne.TextWrapWord
 
 	w := test.NewApp().NewWindow("")
+	defer w.Close()
 	w.SetContent(entry)
 	w.Resize(fyne.NewSize(108, 64))
 
@@ -309,12 +381,12 @@ func TestEntry_PasteFromClipboard_MultilineWrapping(t *testing.T) {
 	assert.Equal(t, 0, entry.CursorRow)
 	assert.Equal(t, 1, entry.CursorColumn)
 
-	clipboard := fyne.CurrentApp().Driver().AllWindows()[0].Clipboard()
+	clipboard := fyne.CurrentApp().Clipboard()
 	clipboard.SetContent("esting entry")
 
 	entry.pasteFromClipboard(clipboard)
 
-	assert.Equal(t, entry.Text, "Testing entry")
+	assert.Equal(t, "Testing entry", entry.Text)
 	assert.Equal(t, 1, entry.CursorRow)
 	assert.Equal(t, 5, entry.CursorColumn)
 
@@ -326,17 +398,45 @@ func TestEntry_PasteFromClipboard_MultilineWrapping(t *testing.T) {
 	assert.Equal(t, 7, entry.CursorColumn)
 }
 
+func TestEntry_PasteFromClipboardValidation(t *testing.T) {
+	entry := NewEntry()
+	var triggered int
+	entry.Validator = func(s string) error {
+		triggered++
+		return nil
+	}
+
+	testContent := "test"
+	clipboard := test.NewTempApp(t).Clipboard()
+	clipboard.SetContent(testContent)
+
+	entry.pasteFromClipboard(clipboard)
+	assert.Equal(t, 2, triggered)
+}
+
+func TestEntry_PlaceholderTextStyle(t *testing.T) {
+	e := NewEntry()
+	e.TextStyle = fyne.TextStyle{Bold: true, Italic: true}
+
+	w := test.NewTempWindow(t, e)
+	assert.Equal(t, e.TextStyle, e.placeholder.Segments[0].(*TextSegment).Style.TextStyle)
+
+	w.Canvas().Focus(e)
+	assert.Equal(t, e.TextStyle, e.placeholder.Segments[0].(*TextSegment).Style.TextStyle)
+}
+
 func TestEntry_Tab(t *testing.T) {
 	e := NewEntry()
 	e.TextStyle.Monospace = true
 	e.SetText("a\n\tb\nc")
 
+	_ = e.Theme()
 	r := cache.Renderer(e.textProvider()).(*textRenderer)
-	assert.Equal(t, 3, len(r.Objects()))
+	assert.Len(t, r.Objects(), 3)
 	assert.Equal(t, "a", r.Objects()[0].(*canvas.Text).Text)
 	assert.Equal(t, "\tb", r.Objects()[1].(*canvas.Text).Text)
 
-	w := test.NewWindow(e)
+	w := test.NewTempWindow(t, e)
 	w.Resize(fyne.NewSize(86, 86))
 	w.Canvas().Focus(e)
 	test.AssertImageMatches(t, "entry/tab-content.png", w.Canvas().Capture())
@@ -348,6 +448,7 @@ func TestEntry_TabSelection(t *testing.T) {
 	e.TextStyle.Monospace = true
 
 	e.CursorRow = 1
+	e.sel.cursorRow = 1
 	e.KeyDown(&fyne.KeyEvent{Name: desktop.KeyShiftLeft})
 	e.TypedKey(&fyne.KeyEvent{Name: fyne.KeyRight})
 	e.TypedKey(&fyne.KeyEvent{Name: fyne.KeyRight})
@@ -355,7 +456,7 @@ func TestEntry_TabSelection(t *testing.T) {
 
 	assert.Equal(t, "\tb", e.SelectedText())
 
-	w := test.NewWindow(e)
+	w := test.NewTempWindow(t, e)
 	w.Resize(fyne.NewSize(86, 86))
 	w.Canvas().Focus(e)
 	test.AssertImageMatches(t, "entry/tab-select.png", w.Canvas().Capture())
@@ -378,6 +479,7 @@ func getClickPosition(str string, row int) *fyne.PointEvent {
 	rowHeight := fyne.MeasureText("M", theme.TextSize(), fyne.TextStyle{}).Height
 	y := float32(row)*rowHeight + rowHeight/2
 
-	pos := fyne.NewPos(x, y)
+	// add a couple of pixels, this is currently a workaround for weird mouse to column logic on text with kerning
+	pos := fyne.NewPos(x+2, y)
 	return &fyne.PointEvent{Position: pos}
 }

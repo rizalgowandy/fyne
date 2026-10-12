@@ -1,16 +1,20 @@
 package widget
 
 import (
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/internal/cache"
 	"fyne.io/fyne/v2/internal/painter/software"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLabel_Binding(t *testing.T) {
@@ -49,7 +53,7 @@ func TestLabel_MinSize(t *testing.T) {
 	label := NewLabel("Test")
 	minA := label.MinSize()
 
-	assert.Less(t, theme.Padding()*2, minA.Width)
+	assert.Less(t, theme.InnerPadding(), minA.Width)
 
 	label.SetText("Longer")
 	minB := label.MinSize()
@@ -80,19 +84,19 @@ func TestLabel_Text(t *testing.T) {
 	label.Refresh()
 
 	assert.Equal(t, "Test", label.Text)
-	assert.Equal(t, "Test", textRenderTexts(label)[0].Text)
+	assert.Equal(t, "Test", labelTextRenderTexts(label)[0].Text)
 }
 
 func TestLabel_Text_Refresh(t *testing.T) {
 	label := &Label{Text: ""}
 
 	assert.Equal(t, "", label.Text)
-	assert.Equal(t, "", textRenderTexts(label)[0].Text)
+	assert.Equal(t, "", labelTextRenderTexts(label)[0].Text)
 
 	label.Text = "Test"
 	label.Refresh()
 	assert.Equal(t, "Test", label.Text)
-	assert.Equal(t, "Test", textRenderTexts(label)[0].Text)
+	assert.Equal(t, "Test", labelTextRenderTexts(label)[0].Text)
 }
 
 func TestLabel_SetText(t *testing.T) {
@@ -102,39 +106,40 @@ func TestLabel_SetText(t *testing.T) {
 	label.SetText("New")
 
 	assert.Equal(t, "New", label.Text)
-	assert.Equal(t, "New", textRenderTexts(label)[0].Text)
+	assert.Equal(t, "New", labelTextRenderTexts(label)[0].Text)
 }
 
 func TestLabel_Alignment(t *testing.T) {
 	label := &Label{Text: "Test", Alignment: fyne.TextAlignTrailing}
 	label.Refresh()
 
-	assert.Equal(t, fyne.TextAlignTrailing, textRenderTexts(label)[0].Alignment)
+	assert.Equal(t, fyne.TextAlignTrailing, labelTextRenderTexts(label)[0].Alignment)
 }
 
 func TestLabel_Alignment_Later(t *testing.T) {
 	label := &Label{Text: "Test"}
 	label.Refresh()
-	assert.Equal(t, fyne.TextAlignLeading, textRenderTexts(label)[0].Alignment)
+	assert.Equal(t, fyne.TextAlignLeading, labelTextRenderTexts(label)[0].Alignment)
 
 	label.Alignment = fyne.TextAlignTrailing
 	label.Refresh()
-	assert.Equal(t, fyne.TextAlignTrailing, textRenderTexts(label)[0].Alignment)
+	assert.Equal(t, fyne.TextAlignTrailing, labelTextRenderTexts(label)[0].Alignment)
 }
 
 func TestText_MinSize_MultiLine(t *testing.T) {
 	textOneLine := NewLabel("Break")
 	min := textOneLine.MinSize()
 	textMultiLine := NewLabel("Bre\nak")
+	rich := test.TempWidgetRenderer(t, textMultiLine).Objects()[0].(*RichText)
 	min2 := textMultiLine.MinSize()
 
-	assert.True(t, min2.Width < min.Width)
-	assert.True(t, min2.Height > min.Height)
+	assert.Less(t, min2.Width, min.Width)
+	assert.Greater(t, min2.Height, min.Height)
 
 	yPos := float32(-1)
-	for _, text := range test.WidgetRenderer(textMultiLine).(*textRenderer).Objects() {
-		assert.True(t, text.Size().Height < min2.Height)
-		assert.True(t, text.Position().Y > yPos)
+	for _, text := range test.TempWidgetRenderer(t, rich).(*textRenderer).Objects() {
+		assert.Less(t, text.Size().Height, min2.Height)
+		assert.Greater(t, text.Position().Y, yPos)
 		yPos = text.Position().Y
 	}
 }
@@ -155,11 +160,12 @@ func TestText_MinSizeAdjustsWithContent(t *testing.T) {
 func TestLabel_ApplyTheme(t *testing.T) {
 	text := NewLabel("Line 1")
 	text.Hide()
+	rich := test.TempWidgetRenderer(t, text).Objects()[0].(*RichText)
 
-	render := test.WidgetRenderer(text).(*textRenderer)
-	assert.Equal(t, theme.ForegroundColor(), render.Objects()[0].(*canvas.Text).Color)
+	render := test.TempWidgetRenderer(t, rich).(*textRenderer)
+	assert.Equal(t, theme.Color(theme.ColorNameForeground), render.Objects()[0].(*canvas.Text).Color)
 	text.Show()
-	assert.Equal(t, theme.ForegroundColor(), render.Objects()[0].(*canvas.Text).Color)
+	assert.Equal(t, theme.Color(theme.ColorNameForeground), render.Objects()[0].(*canvas.Text).Color)
 }
 
 func TestLabel_CreateRendererDoesNotAffectSize(t *testing.T) {
@@ -179,8 +185,7 @@ func TestLabel_CreateRendererDoesNotAffectSize(t *testing.T) {
 }
 
 func TestLabel_ChangeTruncate(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	c := test.NewCanvasWithPainter(software.NewPainter())
 	c.SetPadded(false)
@@ -191,9 +196,74 @@ func TestLabel_ChangeTruncate(t *testing.T) {
 
 	truncSize := text.MinSize().Subtract(fyne.NewSize(10, 0))
 	text.Resize(truncSize)
-	text.Wrapping = fyne.TextTruncate
+	text.Truncation = fyne.TextTruncateClip
 	text.Refresh()
 	test.AssertRendersToMarkup(t, "label/truncate.xml", c)
+}
+
+func TestLabel_Select(t *testing.T) {
+	l := NewLabel("Hello")
+	l.Selectable = true
+
+	assert.Empty(t, l.SelectedText())
+	assert.Equal(t, 2, len(test.WidgetRenderer(l).Objects()))
+
+	sel := test.WidgetRenderer(l).Objects()[0].(*focusSelectable)
+	sel.MouseDown(&desktop.MouseEvent{
+		Button:     desktop.MouseButtonPrimary,
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(15, 10)},
+	})
+	sel.Dragged(&fyne.DragEvent{
+		Dragged:    fyne.Delta{DX: 15, DY: 0},
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(30, 10)},
+	})
+	sel.DragEnd()
+	sel.MouseUp(&desktop.MouseEvent{
+		Button:     desktop.MouseButtonPrimary,
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(30, 10)},
+	})
+	assert.Equal(t, "el", l.SelectedText())
+
+	sel.TypedShortcut(&fyne.ShortcutCopy{})
+	assert.Equal(t, "el", fyne.CurrentApp().Clipboard().Content())
+
+	l.SetText("World")
+	assert.Equal(t, "", l.SelectedText())
+
+	l.Selectable = false
+	l.Refresh()
+	assert.Equal(t, 1, len(test.WidgetRenderer(l).Objects()))
+	assert.Empty(t, l.SelectedText())
+}
+
+func TestLabel_SelectWord(t *testing.T) {
+	l := NewLabel("Hello")
+	l.Selectable = true
+
+	assert.Empty(t, l.SelectedText())
+
+	sel := test.WidgetRenderer(l).Objects()[0].(*focusSelectable)
+	sel.DoubleTapped(&fyne.PointEvent{Position: fyne.NewPos(15, 10)})
+	assert.Equal(t, "Hello", l.SelectedText())
+}
+
+func TestLabel_SelectLine(t *testing.T) {
+	l := NewLabel("Longer line")
+	l.Selectable = true
+
+	assert.Empty(t, l.SelectedText())
+
+	sel := test.WidgetRenderer(l).Objects()[0].(*focusSelectable)
+	pointEvent := fyne.PointEvent{Position: fyne.NewPos(15, 10)}
+	tapEvent := &desktop.MouseEvent{
+		Button:     desktop.MouseButtonPrimary,
+		PointEvent: pointEvent,
+	}
+	sel.DoubleTapped(&pointEvent)
+	sel.MouseDown(tapEvent)
+	sel.MouseUp(tapEvent)
+
+	assert.Equal(t, "Longer line", l.SelectedText())
 }
 
 func TestNewLabelWithData(t *testing.T) {
@@ -203,4 +273,131 @@ func TestNewLabelWithData(t *testing.T) {
 	label := NewLabelWithData(str)
 	waitForBinding()
 	assert.Equal(t, "Init", label.Text)
+}
+
+func TestLabelImportance(t *testing.T) {
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
+
+	lbl := NewLabel("hello, fyne")
+	w := test.NewWindow(lbl)
+	defer w.Close()
+
+	test.AssertImageMatches(t, "label/label_importance_medium.png", w.Canvas().Capture())
+
+	lbl.Importance = LowImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_low.png", w.Canvas().Capture())
+
+	lbl.Importance = MediumImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_medium.png", w.Canvas().Capture())
+
+	lbl.Importance = HighImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_high.png", w.Canvas().Capture())
+
+	lbl.Importance = DangerImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_danger.png", w.Canvas().Capture())
+
+	lbl.Importance = WarningImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_warning.png", w.Canvas().Capture())
+
+	lbl.Importance = SuccessImportance
+	lbl.Refresh()
+	test.AssertImageMatches(t, "label/label_importance_success.png", w.Canvas().Capture())
+}
+
+func TestLabelSizeNameWithSelection(t *testing.T) {
+	l := NewLabel("Hello")
+	l.Selectable = true
+
+	w := test.NewWindow(l)
+	defer w.Close()
+
+	assert.Empty(t, l.SelectedText())
+	assert.Equal(t, 2, len(test.WidgetRenderer(l).Objects()))
+
+	sel := test.WidgetRenderer(l).Objects()[0].(*focusSelectable)
+	sel.MouseDown(&desktop.MouseEvent{
+		Button:     desktop.MouseButtonPrimary,
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(15, 10)},
+	})
+	sel.Dragged(&fyne.DragEvent{
+		Dragged:    fyne.Delta{DX: 15, DY: 0},
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(30, 10)},
+	})
+	sel.DragEnd()
+	sel.MouseUp(&desktop.MouseEvent{
+		Button:     desktop.MouseButtonPrimary,
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(30, 10)},
+	})
+	assert.Equal(t, "el", l.SelectedText())
+
+	test.AssertRendersToImage(t, "label/label_selection_defaultsize.png", w.Canvas())
+
+	l.SizeName = theme.SizeNameHeadingText
+	l.Refresh()
+	w.SetContent(l) // updates window size
+
+	test.AssertRendersToImage(t, "label/label_selection_headersize.png", w.Canvas())
+}
+
+func labelTextRenderTexts(p fyne.Widget) []*canvas.Text {
+	rich := cache.Renderer(p).Objects()[0].(*RichText)
+	return richTextRenderTexts(rich)
+}
+
+func TestLabel_SelectAligned(t *testing.T) {
+	for name, align := range map[string]fyne.TextAlign{
+		"leading":  fyne.TextAlignLeading,
+		"center":   fyne.TextAlignCenter,
+		"trailing": fyne.TextAlignTrailing,
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := NewLabelWithStyle("Hello World", align, fyne.TextStyle{})
+			testLabelSelectAligned(t, l, fyne.NewSize(300, 50))
+		})
+		t.Run(name+"_ellipsis", func(t *testing.T) {
+			l := NewLabelWithStyle("Hello World, this text is too long to fit", align, fyne.TextStyle{})
+			l.Truncation = fyne.TextTruncateEllipsis
+			testLabelSelectAligned(t, l, fyne.NewSize(120, 50))
+
+			texts := richTextRenderTexts(l.provider)
+			require.Len(t, texts, 1)
+			assert.True(t, strings.HasSuffix(texts[0].Text, "…"))
+		})
+	}
+}
+
+func testLabelSelectAligned(t *testing.T, l *Label, size fyne.Size) {
+	l.Selectable = true
+	w := test.NewTempWindow(t, l)
+	w.Resize(size)
+	l.Resize(size)
+
+	texts := richTextRenderTexts(l.provider)
+	require.Len(t, texts, 1)
+	text := texts[0]
+	textWidth := fyne.MeasureText(text.Text, text.TextSize, text.TextStyle).Width
+	textX := text.Position().X
+	switch l.Alignment {
+	case fyne.TextAlignTrailing:
+		textX += text.Size().Width - textWidth
+	case fyne.TextAlignCenter:
+		textX += (text.Size().Width - textWidth) / 2
+	}
+	helloWidth := fyne.MeasureText("Hello", text.TextSize, text.TextStyle).Width
+
+	sel := test.WidgetRenderer(l).Objects()[0].(*focusSelectable)
+	// double tap in the middle of the "Hello" glyphs as they are drawn
+	sel.DoubleTapped(&fyne.PointEvent{Position: fyne.NewPos(textX+helloWidth/2, 10)})
+	assert.Equal(t, "Hello", l.SelectedText())
+
+	rects := test.WidgetRenderer(sel).Objects()
+	require.Len(t, rects, 1)
+	assert.InDelta(t, textX-1, rects[0].Position().X, 0.5)
+	assert.InDelta(t, helloWidth+1, rects[0].Size().Width, 0.5)
 }

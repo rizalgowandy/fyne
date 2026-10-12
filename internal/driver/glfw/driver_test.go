@@ -1,10 +1,8 @@
-// +build !ci
-// +build !mobile
+//go:build !no_glfw && !mobile
 
 package glfw
 
 import (
-	"sync"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -16,7 +14,7 @@ import (
 )
 
 func Test_gLDriver_AbsolutePositionForObject(t *testing.T) {
-	w := createWindow("Test").(*window)
+	w := createWindow("Test")
 
 	cr1c1 := widget.NewLabel("row 1 col 1")
 	cr1c2 := widget.NewLabel("row 1 col 2")
@@ -39,29 +37,43 @@ func Test_gLDriver_AbsolutePositionForObject(t *testing.T) {
 	)
 	// We want to test the handling of the canvas' Fyne menu here.
 	// We work around w.SetMainMenu because on MacOS the main menu is a native menu.
-	c := w.Canvas().(*glCanvas)
-	movl := buildMenuOverlay(mm, w)
-	c.Lock()
+	c := w.Canvas()
+	movl := buildMenuOverlay(mm, w.window)
 	c.setMenuOverlay(movl)
-	c.Unlock()
 	w.SetContent(content)
-	w.Resize(fyne.NewSize(200, 199))
+	w.Resize(fyne.NewSize(300, 200))
+	ensureCanvasSize(t, w, fyne.NewSize(300, 200))
 
 	ovli1 := widget.NewLabel("Overlay Item 1")
 	ovli2 := widget.NewLabel("Overlay Item 2")
 	ovli3 := widget.NewLabel("Overlay Item 3")
 	ovlContent := container.NewVBox(ovli1, ovli2, ovli3)
-	ovl := widget.NewModalPopUp(ovlContent, c)
-	ovl.Show()
+	// use the unsafe canvas so we can wrap the whole show in safety without deadlock
+	ovl := widget.NewModalPopUp(ovlContent, w.window.Canvas())
+	runOnMain(ovl.Show)
+
+	// This helps to detect size changes which might happen when the font size or rendering are changed.
+	// It gives also a hint on the expected offset for the overlay components.
+	var size fyne.Size
+	runOnMain(func() {
+		size = ovlContent.Size()
+	})
+	// TODO modal content zero not minsize
+	assert.InDelta(t, 112, size.Width, 1)
+	assert.InDelta(t, 113, size.Height, 1)
 
 	repaintWindow(w)
+	ensureCanvasSize(t, w, fyne.NewSize(300, 200))
 	// accessing the menu bar's actual CanvasObjects isn't straight forward
 	// 0 is the shadow
 	// 1 is the menu bar’s underlay
 	// 2 is the menu bar's background
 	// 3 is the container holding the items
-	mbarCont := cache.Renderer(movl.(fyne.Widget)).Objects()[3].(*fyne.Container)
-	m2 := mbarCont.Objects[1]
+	var m2 fyne.CanvasObject
+	runOnMain(func() {
+		mbarCont := cache.Renderer(movl.(fyne.Widget)).Objects()[2].(*fyne.Container)
+		m2 = mbarCont.Objects[1]
+	})
 
 	tests := map[string]struct {
 		object       fyne.CanvasObject
@@ -69,18 +81,18 @@ func Test_gLDriver_AbsolutePositionForObject(t *testing.T) {
 	}{
 		"a cell": {
 			object: cr1c3,
-			wantX:  197,
-			wantY:  32,
+			wantX:  184,
+			wantY:  31,
 		},
 		"a row": {
 			object: cr2,
 			wantX:  4,
-			wantY:  73,
+			wantY:  70,
 		},
 		"the window content": {
 			object: content,
 			wantX:  4,
-			wantY:  32,
+			wantY:  31,
 		},
 		"a hidden element": {
 			object: cr2c2,
@@ -96,56 +108,27 @@ func Test_gLDriver_AbsolutePositionForObject(t *testing.T) {
 
 		"an overlay item": {
 			object: ovli2,
-			wantX:  87,
-			wantY:  81,
+			wantX:  93,
+			wantY:  82,
 		},
 		"the overlay content": {
 			object: ovlContent,
-			wantX:  87,
-			wantY:  40,
+			wantX:  93,
+			wantY:  43,
 		},
 		"the overlay": {
-			object: ovl,
+			object: w.window.Canvas().Overlays().Top(),
 			wantX:  0,
 			wantY:  0,
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			pos := d.AbsolutePositionForObject(tt.object)
-			assert.Equal(t, tt.wantX, int(pos.X))
-			assert.Equal(t, tt.wantY, int(pos.Y))
+			runOnMain(func() {
+				pos := d.AbsolutePositionForObject(tt.object)
+				assert.Equal(t, tt.wantX, int(pos.X))
+				assert.Equal(t, tt.wantY, int(pos.Y))
+			})
 		})
 	}
-}
-
-var mainRoutineID int
-
-func init() {
-	mainRoutineID = goroutineID()
-}
-
-func TestGoroutineID(t *testing.T) {
-	assert.Equal(t, 1, mainRoutineID)
-
-	var childID1, childID2 int
-	testID1 := goroutineID()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		childID1 = goroutineID()
-		wg.Done()
-	}()
-	go func() {
-		childID2 = goroutineID()
-		wg.Done()
-	}()
-	wg.Wait()
-	testID2 := goroutineID()
-
-	assert.Equal(t, testID1, testID2)
-	assert.Greater(t, childID1, 0)
-	assert.NotEqual(t, testID1, childID1)
-	assert.Greater(t, childID2, 0)
-	assert.NotEqual(t, childID1, childID2)
 }

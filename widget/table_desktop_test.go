@@ -1,4 +1,4 @@
-// +build !mobile
+//go:build !mobile
 
 package widget
 
@@ -13,8 +13,7 @@ import (
 )
 
 func TestTable_Hovered(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	table := NewTable(
 		func() (int, int) { return 2, 2 },
@@ -23,7 +22,8 @@ func TestTable_Hovered(t *testing.T) {
 		},
 		func(id TableCellID, c fyne.CanvasObject) {
 			c.(*Label).SetText(fmt.Sprintf("Cell %d, %d", id.Row, id.Col))
-		})
+		},
+	)
 
 	w := test.NewWindow(table)
 	defer w.Close()

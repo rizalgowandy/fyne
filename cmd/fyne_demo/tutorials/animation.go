@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -13,18 +14,21 @@ import (
 func makeAnimationScreen(_ fyne.Window) fyne.CanvasObject {
 	curves := makeAnimationCurves()
 	curves.Move(fyne.NewPos(0, 140+theme.Padding()))
-	return fyne.NewContainerWithoutLayout(makeAnimationCanvas(), curves)
+	return container.NewWithoutLayout(makeAnimationCanvas(), curves)
 }
 
 func makeAnimationCanvas() fyne.CanvasObject {
 	rect := canvas.NewRectangle(color.Black)
 	rect.Resize(fyne.NewSize(410, 140))
 
-	a := canvas.NewColorRGBAAnimation(theme.PrimaryColorNamed(theme.ColorBlue), theme.PrimaryColorNamed(theme.ColorGreen),
+	a := canvas.NewColorRGBAAnimation(
+		color.NRGBA{R: 0x29, G: 0x6f, B: 0xf6, A: 0xaa},
+		color.NRGBA{R: 0x8b, G: 0xc3, B: 0x4a, A: 0xaa},
 		time.Second*3, func(c color.Color) {
 			rect.FillColor = c
 			canvas.Refresh(rect)
-		})
+		},
+	)
 	a.RepeatCount = fyne.AnimationRepeatForever
 	a.AutoReverse = true
 	a.Start()
@@ -42,6 +46,8 @@ func makeAnimationCanvas() fyne.CanvasObject {
 	a2.Curve = fyne.AnimationLinear
 	a2.Start()
 
+	OnChangeFuncs = append(OnChangeFuncs, a.Stop, a2.Stop)
+
 	running := true
 	var toggle *widget.Button
 	toggle = widget.NewButton("Stop", func() {
@@ -58,7 +64,7 @@ func makeAnimationCanvas() fyne.CanvasObject {
 	})
 	toggle.Resize(toggle.MinSize())
 	toggle.Move(fyne.NewPos(152, 54))
-	return fyne.NewContainerWithoutLayout(rect, i, toggle)
+	return container.NewWithoutLayout(rect, i, toggle)
 }
 
 func makeAnimationCurves() fyne.CanvasObject {
@@ -66,6 +72,8 @@ func makeAnimationCurves() fyne.CanvasObject {
 	label2, box2, a2 := makeAnimationCurveItem("EaseIn", fyne.AnimationEaseIn, 30+theme.Padding())
 	label3, box3, a3 := makeAnimationCurveItem("EaseOut", fyne.AnimationEaseOut, 60+theme.Padding()*2)
 	label4, box4, a4 := makeAnimationCurveItem("Linear", fyne.AnimationLinear, 90+theme.Padding()*3)
+
+	OnChangeFuncs = append(OnChangeFuncs, a1.Stop, a2.Stop, a3.Stop, a4.Stop)
 
 	start := widget.NewButton("Compare", func() {
 		a1.Start()
@@ -75,11 +83,12 @@ func makeAnimationCurves() fyne.CanvasObject {
 	})
 	start.Resize(start.MinSize())
 	start.Move(fyne.NewPos(0, 120+theme.Padding()*4))
-	return fyne.NewContainerWithoutLayout(label1, label2, label3, label4, box1, box2, box3, box4, start)
+	return container.NewWithoutLayout(label1, label2, label3, label4, box1, box2, box3, box4, start)
 }
 
 func makeAnimationCurveItem(label string, curve fyne.AnimationCurve, yOff float32) (
-	text *widget.Label, box fyne.CanvasObject, anim *fyne.Animation) {
+	text *widget.Label, box fyne.CanvasObject, anim *fyne.Animation,
+) {
 	text = widget.NewLabel(label)
 	text.Alignment = fyne.TextAlignCenter
 	text.Resize(fyne.NewSize(380, 30))
@@ -92,11 +101,12 @@ func makeAnimationCurveItem(label string, curve fyne.AnimationCurve, yOff float3
 		fyne.NewPos(0, yOff), fyne.NewPos(380, yOff), time.Second, func(p fyne.Position) {
 			box.Move(p)
 			box.Refresh()
-		})
+		},
+	)
 	anim.Curve = curve
 	anim.AutoReverse = true
 	anim.RepeatCount = 1
-	return
+	return text, box, anim
 }
 
 // themedBox is a simple box that change its background color according
@@ -113,7 +123,7 @@ func newThemedBox() *themedBox {
 
 func (b *themedBox) CreateRenderer() fyne.WidgetRenderer {
 	b.ExtendBaseWidget(b)
-	bg := canvas.NewRectangle(theme.ForegroundColor())
+	bg := canvas.NewRectangle(theme.Color(theme.ColorNameForeground))
 	return &themedBoxRenderer{bg: bg, objects: []fyne.CanvasObject{bg}}
 }
 
@@ -138,6 +148,6 @@ func (r *themedBoxRenderer) Objects() []fyne.CanvasObject {
 }
 
 func (r *themedBoxRenderer) Refresh() {
-	r.bg.FillColor = theme.ForegroundColor()
+	r.bg.FillColor = theme.Color(theme.ColorNameForeground)
 	r.bg.Refresh()
 }

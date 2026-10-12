@@ -1,21 +1,23 @@
 package commands
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"fyne.io/fyne/v2/cmd/fyne/internal/util"
-	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/execabs"
+
+	//lint:ignore SA1019 The recommended replacement does not solve the use-case
+	"golang.org/x/tools/go/vcs"
 )
 
 // Get returns the command which downloads and installs fyne applications.
 func Get() *cli.Command {
-	g := &Getter{}
+	g := &Getter{appData: &appData{}}
 	return &cli.Command{
 		Name:        "get",
 		Usage:       "Downloads and installs a Fyne application",
@@ -31,7 +33,13 @@ func Get() *cli.Command {
 				Name:        "appID",
 				Aliases:     []string{"id"},
 				Usage:       "For darwin and Windows targets an appID in the form of a reversed domain name is required, for ios this must match a valid provisioning profile",
-				Destination: &g.appID,
+				Destination: &g.AppID,
+			},
+			&cli.StringFlag{
+				Name:        "installDir",
+				Aliases:     []string{"o"},
+				Usage:       "A specific location to install to, rather than the OS default.",
+				Destination: &g.installDir,
 			},
 		},
 		Action: func(ctx *cli.Context) error {
@@ -47,34 +55,59 @@ func Get() *cli.Command {
 
 // Getter is the command that can handle downloading and installing Fyne apps to the current platform.
 type Getter struct {
-	icon, appID string
+	*appData
+	installDir string
 }
 
 // NewGetter returns a command that can handle the download and install of GUI apps built using Fyne.
-// It depends on a Go and C compiler installed at this stage and takes a single, package, parameter to identify the app.
+// It depends on a Go and C compiler installed at this stage.
 func NewGetter() *Getter {
-	return &Getter{}
+	return &Getter{appData: &appData{}}
 }
 
 // Get automates the download and install of a named GUI app package.
 func (g *Getter) Get(pkg string) error {
-	cmd := execabs.Command("go", "get", "-u", "-d", pkg)
-	cmd.Env = append(os.Environ(), "GO111MODULE=off") // cache the downloaded code
+	wd, _ := os.Getwd()
+	defer func() {
+		if wd != "" {
+			os.Chdir(wd)
+		}
+	}()
+
+	name := filepath.Base(pkg)
+	path, err := os.MkdirTemp("", fmt.Sprintf("fyne-get-%s-*", name))
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(path)
+
+	repo, err := vcs.RepoRootForImportPath(pkg, false)
+	if err != nil {
+		return fmt.Errorf("failed to look up source control for package: %w", err)
+	}
+	if repo.VCS.Name != "Git" {
+		return errors.New("unsupported VCS: " + repo.VCS.Name)
+	}
+	cmd := execabs.Command("git", "clone", repo.Repo, "--depth=1", path)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return err
 	}
 
-	path := filepath.Join(goPath(), "src", pkg)
 	if !util.Exists(path) { // the error above may be ignorable, unless the path was not found
 		return err
 	}
 
-	install := &Installer{srcDir: path, icon: g.icon, appID: g.appID, release: true}
+	if repo.Root != pkg {
+		dir := strings.Replace(pkg, repo.Root, "", 1)
+		path = filepath.Join(path, dir)
+	}
+
+	install := &Installer{appData: g.appData, installDir: g.installDir, srcDir: path, release: true}
 	if err := install.validate(); err != nil {
-		return errors.Wrap(err, "Failed to set up installer")
+		return fmt.Errorf("failed to set up installer: %w", err)
 	}
 
 	return install.install()
@@ -84,7 +117,7 @@ func (g *Getter) Get(pkg string) error {
 //
 // Since: 2.1
 func (g *Getter) SetAppID(id string) {
-	g.appID = id
+	g.AppID = id
 }
 
 // SetIcon allows you to set the app icon path that will be used for the next Get operation.
@@ -121,16 +154,4 @@ func (g *Getter) Run(args []string) {
 		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 		os.Exit(1)
 	}
-}
-
-func goPath() string {
-	cmd := execabs.Command("go", "env", "GOPATH")
-	out, err := cmd.CombinedOutput()
-
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "go")
-	}
-
-	return strings.TrimSpace(string(out[0 : len(out)-1]))
 }

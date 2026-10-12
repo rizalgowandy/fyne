@@ -31,6 +31,24 @@ func (r *Raster) Alpha() float64 {
 	return 1.0 - r.Translucency
 }
 
+// Hide will set this raster to not be visible
+func (r *Raster) Hide() {
+	r.baseObject.Hide()
+
+	repaint(r)
+}
+
+// Move the raster to a new position, relative to its parent / canvas
+func (r *Raster) Move(pos fyne.Position) {
+	if r.Position() == pos {
+		return
+	}
+
+	r.baseObject.Move(pos)
+
+	repaint(r)
+}
+
 // Resize on a raster image causes the new size to be set and then calls Refresh.
 // This causes the underlying data to be recalculated and a new output to be drawn.
 func (r *Raster) Resize(s fyne.Size) {
@@ -42,7 +60,7 @@ func (r *Raster) Resize(s fyne.Size) {
 	Refresh(r)
 }
 
-// Refresh causes this object to be redrawn in it's current state
+// Refresh causes this raster to be redrawn with its configured state.
 func (r *Raster) Refresh() {
 	Refresh(r)
 }
@@ -110,14 +128,10 @@ func NewRasterWithPixels(pixelColor func(x, y, w, h int) color.Color) *Raster {
 	return pix.r
 }
 
-type subImg interface {
-	SubImage(r image.Rectangle) image.Image
-}
-
 // NewRasterFromImage returns a new Raster instance that is rendered from the Go
 // image.Image passed in.
-// Rasters returned from this method will map pixel for pixel to the screen
-// starting img.Bounds().Min pixels from the top left of the canvas object.
+// The top left pixel is at img.Bounds().Min and from there image pixels map to
+// output pixels.
 // Truncates rather than scales the image.
 // If smaller than the target space, the image will be padded with zero-pixels to the target size.
 func NewRasterFromImage(img image.Image) *Raster {
@@ -127,55 +141,40 @@ func NewRasterFromImage(img image.Image) *Raster {
 
 			rect := image.Rect(0, 0, w, h)
 
-			switch {
-			case w == bounds.Max.X && h == bounds.Max.Y:
+			if bounds == rect {
 				return img
-			case w >= bounds.Max.X && h >= bounds.Max.Y:
-				// try quickly truncating
-				if sub, ok := img.(subImg); ok {
-					return sub.SubImage(image.Rectangle{
-						Min: bounds.Min,
-						Max: image.Point{
-							X: bounds.Min.X + w,
-							Y: bounds.Min.Y + h,
-						},
-					})
-				}
-			default:
-				if !rect.Overlaps(bounds) {
-					return image.NewUniform(color.RGBA{})
-				}
-				bounds = bounds.Intersect(rect)
 			}
 
 			// respect the user's pixel format (if possible)
 			var dst draw.Image
 			switch i := img.(type) {
-			case (*image.Alpha):
+			case *image.Alpha:
 				dst = image.NewAlpha(rect)
-			case (*image.Alpha16):
+			case *image.Alpha16:
 				dst = image.NewAlpha16(rect)
-			case (*image.CMYK):
+			case *image.CMYK:
 				dst = image.NewCMYK(rect)
-			case (*image.Gray):
+			case *image.Gray:
 				dst = image.NewGray(rect)
-			case (*image.Gray16):
+			case *image.Gray16:
 				dst = image.NewGray16(rect)
-			case (*image.NRGBA):
+			case *image.NRGBA:
 				dst = image.NewNRGBA(rect)
-			case (*image.NRGBA64):
+			case *image.NRGBA64:
 				dst = image.NewNRGBA64(rect)
-			case (*image.Paletted):
+			case *image.Paletted:
 				dst = image.NewPaletted(rect, i.Palette)
-			case (*image.RGBA):
+			case *image.RGBA:
 				dst = image.NewRGBA(rect)
-			case (*image.RGBA64):
+			case *image.RGBA64:
 				dst = image.NewRGBA64(rect)
 			default:
 				dst = image.NewRGBA(rect)
 			}
 
-			draw.Draw(dst, bounds, img, bounds.Min, draw.Over)
+			// the image is drawn from its top left corner, the bounds origin is not a screen offset.
+			// anything the image does not cover is left as the zero pixels dst was made with
+			draw.Draw(dst, rect.Intersect(bounds.Sub(bounds.Min)), img, bounds.Min, draw.Over)
 			return dst
 		},
 	}

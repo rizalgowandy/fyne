@@ -2,91 +2,99 @@ package dialog
 
 import (
 	"path/filepath"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/lang"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/FyshOS/fancyfs"
 )
 
 const (
 	fileIconSize       = 64
 	fileInlineIconSize = 24
-	fileTextSize       = 24
 	fileIconCellWidth  = fileIconSize * 1.25
 )
 
 type fileDialogItem struct {
 	widget.BaseWidget
-	picker    *fileDialog
-	isCurrent bool
+	picker *fileDialog
 
 	name     string
+	id       int // id in the parent container
+	choose   func(id int)
+	open     func()
 	location fyne.URI
 	dir      bool
 
-	hovered bool
-}
-
-func (i *fileDialogItem) MouseIn(*desktop.MouseEvent) {
-	i.hovered = true
-	i.Refresh()
-}
-
-func (i *fileDialogItem) MouseMoved(*desktop.MouseEvent) {
-}
-
-func (i *fileDialogItem) MouseOut() {
-	i.hovered = false
-	i.Refresh()
-}
-
-func (i *fileDialogItem) Tapped(_ *fyne.PointEvent) {
-	i.picker.setSelected(i)
-	i.Refresh()
+	lastClick time.Time
 }
 
 func (i *fileDialogItem) CreateRenderer() fyne.WidgetRenderer {
-	background := canvas.NewRectangle(theme.PrimaryColor())
-	background.Hide()
 	text := widget.NewLabelWithStyle(i.name, fyne.TextAlignCenter, fyne.TextStyle{})
-	text.Wrapping = fyne.TextTruncate
+	text.Truncation = fyne.TextTruncateEllipsis
+	text.Wrapping = fyne.TextWrapBreak
 	icon := widget.NewFileIcon(i.location)
+	over := &canvas.Image{}
 
 	return &fileItemRenderer{
-		item:       i,
-		background: background,
-		icon:       icon,
-		text:       text,
-		objects:    []fyne.CanvasObject{background, icon, text},
+		item:         i,
+		icon:         icon,
+		text:         text,
+		over:         over,
+		objects:      []fyne.CanvasObject{icon, text, over},
+		fileTextSize: widget.NewLabel("M\nM").MinSize().Height, // cache two-line label height,
 	}
 }
 
-func fileName(path fyne.URI) (name string) {
-	pathstr := path.String()[len(path.Scheme())+3:]
-	name = filepath.Base(pathstr)
-	ext := filepath.Ext(name[1:])
-	name = name[:len(name)-len(ext)]
+func (i *fileDialogItem) setLocation(l fyne.URI, dir, up bool) {
+	i.dir = dir
+	i.location = l
+	i.name = l.Name()
 
-	return
+	if i.picker.view == GridView {
+		ext := filepath.Ext(i.name[1:])
+		i.name = i.name[:len(i.name)-len(ext)]
+	}
+
+	if up {
+		i.name = "(" + lang.X("file.parent", "Parent") + ")"
+	}
+
+	i.Refresh()
 }
 
-func (i *fileDialogItem) isDirectory() bool {
-	return i.dir
+func (i *fileDialogItem) Tapped(*fyne.PointEvent) {
+	if i.choose != nil {
+		i.choose(i.id)
+	}
+	now := time.Now()
+	if !i.dir && now.Sub(i.lastClick) < fyne.CurrentApp().Driver().DoubleTapDelay() && i.open != nil {
+		// It is a double click, so we ask the dialog to open
+		i.open()
+	}
+	i.lastClick = now
 }
 
-func (f *fileDialog) newFileItem(location fyne.URI, dir bool) *fileDialogItem {
+func (f *fileDialog) newFileItem(location fyne.URI, dir, up bool) *fileDialogItem {
 	item := &fileDialogItem{
 		picker:   f,
 		location: location,
+		name:     location.Name(),
 		dir:      dir,
 	}
 
-	if dir {
-		item.name = location.Name()
-	} else {
-		item.name = fileName(location)
+	if f.view == GridView {
+		ext := filepath.Ext(item.name[1:])
+		item.name = item.name[:len(item.name)-len(ext)]
+	}
+
+	if up {
+		item.name = "(" + lang.X("file.parent", "Parent") + ")"
 	}
 
 	item.ExtendBaseWidget(item)
@@ -94,64 +102,90 @@ func (f *fileDialog) newFileItem(location fyne.URI, dir bool) *fileDialogItem {
 }
 
 type fileItemRenderer struct {
-	item *fileDialogItem
+	item         *fileDialogItem
+	fileTextSize float32
 
-	background *canvas.Rectangle
-	icon       *widget.FileIcon
-	text       *widget.Label
-	objects    []fyne.CanvasObject
+	icon    *widget.FileIcon
+	text    *widget.Label
+	over    *canvas.Image
+	objects []fyne.CanvasObject
 }
 
-func (s fileItemRenderer) Layout(size fyne.Size) {
-	s.background.Resize(size)
-
-	if s.item.picker.view == gridView {
-		s.icon.Resize(fyne.NewSize(fileIconSize, fileIconSize))
+func (s *fileItemRenderer) Layout(size fyne.Size) {
+	if s.item.picker.view == GridView {
+		s.icon.Resize(fyne.NewSquareSize(fileIconSize))
 		s.icon.Move(fyne.NewPos((size.Width-fileIconSize)/2, 0))
 
+		folderInsetX := float32(10)
+		folderInsetBottom := float32(25)
+		folderInsetTop := float32(20)
+		s.over.Resize(fyne.NewSize(fileIconSize-folderInsetX*2, fileIconSize-folderInsetX-folderInsetBottom))
+		s.over.Move(s.icon.Position().AddXY(folderInsetX, folderInsetTop))
+
 		s.text.Alignment = fyne.TextAlignCenter
-		s.text.Resize(fyne.NewSize(size.Width, fileTextSize))
-		s.text.Move(fyne.NewPos(0, size.Height-s.text.MinSize().Height))
+		s.text.Resize(fyne.NewSize(size.Width, s.fileTextSize))
+		s.text.Move(fyne.NewPos(0, size.Height-s.fileTextSize))
 	} else {
-		s.icon.Resize(fyne.NewSize(fileInlineIconSize, fileInlineIconSize))
+		s.icon.Resize(fyne.NewSquareSize(fileInlineIconSize))
 		s.icon.Move(fyne.NewPos(theme.Padding(), (size.Height-fileInlineIconSize)/2))
 
+		folderInsetX := float32(4)
+		folderInsetBottom := float32(6)
+		folderInsetTop := float32(6)
+		s.over.Resize(fyne.NewSize(fileInlineIconSize-folderInsetX*2, fileInlineIconSize-folderInsetX-folderInsetBottom))
+		s.over.Move(s.icon.Position().AddXY(folderInsetX, folderInsetTop))
+
 		s.text.Alignment = fyne.TextAlignLeading
-		s.text.Resize(fyne.NewSize(size.Width, fileTextSize))
-		s.text.Move(fyne.NewPos(fileInlineIconSize, (size.Height-s.text.MinSize().Height)/2))
+		textMin := s.text.MinSize()
+		s.text.Resize(fyne.NewSize(size.Width, textMin.Height))
+		s.text.Move(fyne.NewPos(fileInlineIconSize, (size.Height-textMin.Height)/2))
 	}
-
 }
 
-func (s fileItemRenderer) MinSize() fyne.Size {
-	var padding fyne.Size
-
-	if s.item.picker.view == gridView {
-		padding = fyne.NewSize(fileIconCellWidth-fileIconSize, theme.Padding())
-		return fyne.NewSize(fileIconSize, fileIconSize+fileTextSize).Add(padding)
+func (s *fileItemRenderer) MinSize() fyne.Size {
+	if s.item.picker.view == GridView {
+		return fyne.NewSize(fileIconCellWidth, fileIconSize+s.fileTextSize)
 	}
 
-	padding = fyne.NewSize(theme.Padding(), theme.Padding()*4)
-	return fyne.NewSize(fileInlineIconSize+s.text.MinSize().Width, fileTextSize).Add(padding)
+	textMin := s.text.MinSize()
+	return fyne.NewSize(fileInlineIconSize+textMin.Width+theme.Padding(), textMin.Height)
 }
 
-func (s fileItemRenderer) Refresh() {
-	if s.item.isCurrent {
-		s.background.FillColor = theme.SelectionColor()
-		s.background.Show()
-	} else if s.item.hovered {
-		s.background.FillColor = theme.HoverColor()
-		s.background.Show()
+func (s *fileItemRenderer) Refresh() {
+	s.fileTextSize = widget.NewLabel("M\nM").MinSize().Height // cache two-line label height
+
+	s.text.SetText(s.item.name)
+	s.icon.SetURI(s.item.location)
+
+	loc := s.item.location
+	if loc.Path()[len(loc.Path())-1] == '/' {
+		loc, _ = storage.ParseURI(loc.String()[:len(loc.String())-1])
+	}
+
+	if ff, _ := fancyfs.DetailsForFolder(loc); ff != nil {
+		if ff.BackgroundURI != nil {
+			s.over.File = ff.BackgroundURI.Path()
+		} else {
+			s.over.File = ""
+		}
+		if ff.BackgroundResource != nil {
+			s.over.Resource = theme.NewColoredResource(ff.BackgroundResource, theme.ColorNameBackground)
+		} else {
+			s.over.Resource = nil
+		}
+		s.over.FillMode = ff.BackgroundFill
 	} else {
-		s.background.Hide()
+		s.over.File = ""
+		s.over.Resource = nil
+		s.over.Image = nil
 	}
-	s.background.Refresh()
-	canvas.Refresh(s.item)
+
+	s.over.Refresh()
 }
 
-func (s fileItemRenderer) Objects() []fyne.CanvasObject {
+func (s *fileItemRenderer) Objects() []fyne.CanvasObject {
 	return s.objects
 }
 
-func (s fileItemRenderer) Destroy() {
+func (s *fileItemRenderer) Destroy() {
 }

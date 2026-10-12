@@ -2,7 +2,6 @@ package widget
 
 import (
 	"image/color"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -11,63 +10,74 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-const cursorInterruptTime = 300 * time.Millisecond
+var timeNow = time.Now // used in tests
+
+const (
+	cursorInterruptDuration = 300 * time.Millisecond
+	cursorFadeAlpha         = uint8(0x16)
+	cursorFadeRatio         = float32(0.2)
+
+	fadeStart = 0.5 - cursorFadeRatio/2
+	fadeStop  = 0.5 + cursorFadeRatio/2
+)
 
 type entryCursorAnimation struct {
-	mu                *sync.RWMutex
 	cursor            *canvas.Rectangle
 	anim              *fyne.Animation
 	lastInterruptTime time.Time
-
-	timeNow func() time.Time // useful for testing
 }
 
 func newEntryCursorAnimation(cursor *canvas.Rectangle) *entryCursorAnimation {
-	a := &entryCursorAnimation{mu: &sync.RWMutex{}, cursor: cursor, timeNow: time.Now}
-	return a
+	return &entryCursorAnimation{cursor: cursor}
 }
 
 // creates fyne animation
-func (a *entryCursorAnimation) createAnim(inverted bool) *fyne.Animation {
-	cursorOpaque := theme.PrimaryColor()
-	r, g, b, _ := col.ToNRGBA(theme.PrimaryColor())
-	cursorDim := color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 0x16}
-	start, end := color.Color(cursorDim), cursorOpaque
-	if inverted {
-		start, end = cursorOpaque, color.Color(cursorDim)
-	}
+func (a *entryCursorAnimation) createAnim() *fyne.Animation {
+	r, g, b, opaqueAlpha := col.ToNRGBA(theme.Color(theme.ColorNamePrimary))
+	opaqueColor := color.NRGBA{R: r, G: g, B: b, A: opaqueAlpha}
+	endColor := color.NRGBA{R: r, G: g, B: b, A: cursorFadeAlpha}
+	startColor := opaqueColor
+	a.cursor.FillColor = startColor
+
+	deltaA := float32(int(endColor.A) - int(startColor.A))
 	interrupted := false
-	anim := canvas.NewColorRGBAAnimation(start, end, time.Second/2, func(c color.Color) {
-		a.mu.RLock()
-		shouldInterrupt := a.timeNow().Sub(a.lastInterruptTime) <= cursorInterruptTime
-		a.mu.RUnlock()
-		if shouldInterrupt {
+	anim := fyne.NewAnimation(time.Second/2, func(f float32) {
+		if timeNow().Sub(a.lastInterruptTime) < cursorInterruptDuration {
 			if !interrupted {
-				a.cursor.FillColor = cursorOpaque
+				a.cursor.FillColor = opaqueColor
 				a.cursor.Refresh()
 				interrupted = true
 			}
 			return
 		}
+
 		if interrupted {
-			a.mu.Lock()
-			a.anim.Stop()
-			if !inverted {
-				a.anim = a.createAnim(true)
-			}
 			interrupted = false
-			a.mu.Unlock()
-			go func() {
-				a.mu.RLock()
-				canStart := a.anim != nil
-				a.mu.RUnlock()
-				if canStart {
-					a.anim.Start()
-				}
-			}()
+			// stop and start effectively restarts animation from the beginning
+			a.anim.Stop()
+			a.anim.Start()
 			return
 		}
-		a.cursor.FillColor = c
+
+		var alpha uint8
+		if f < fadeStart {
+			if a.cursor.FillColor == startColor {
+				return
+			}
+
+			a.cursor.FillColor = startColor
+		} else if f > fadeStop {
+			if a.cursor.FillColor == endColor {
+				return
+			}
+
+			a.cursor.FillColor = endColor
+		} else {
+			fade := (f - fadeStart) / cursorFadeRatio
+			alpha = startColor.A + uint8(deltaA*fade)
+			a.cursor.FillColor = color.NRGBA{R: r, G: g, B: b, A: alpha}
+		}
+
 		a.cursor.Refresh()
 	})
 
@@ -78,30 +88,21 @@ func (a *entryCursorAnimation) createAnim(inverted bool) *fyne.Animation {
 
 // starts cursor animation.
 func (a *entryCursorAnimation) start() {
-	a.mu.Lock()
-	isStopped := a.anim == nil
-	if isStopped {
-		a.anim = a.createAnim(false)
-	}
-	a.mu.Unlock()
-	if isStopped {
+	if a.anim == nil {
+		a.anim = a.createAnim()
 		a.anim.Start()
 	}
 }
 
-// temporarily stops the animation by "cursorInterruptTime".
+// Stops the animation for cursorInterruptDuration.
+// This is used to keep the cursor visible while typing.
 func (a *entryCursorAnimation) interrupt() {
-	a.mu.Lock()
-	a.lastInterruptTime = a.timeNow()
-	a.mu.Unlock()
+	a.lastInterruptTime = timeNow()
 }
 
-// stops cursor animation.
 func (a *entryCursorAnimation) stop() {
-	a.mu.Lock()
 	if a.anim != nil {
 		a.anim.Stop()
 		a.anim = nil
 	}
-	a.mu.Unlock()
 }

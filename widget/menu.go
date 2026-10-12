@@ -3,23 +3,27 @@ package widget
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal"
 	"fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 )
 
-var _ fyne.Widget = (*Menu)(nil)
-var _ fyne.Tappable = (*Menu)(nil)
+var (
+	_ fyne.Widget   = (*Menu)(nil)
+	_ fyne.Tappable = (*Menu)(nil)
+)
 
 // Menu is a widget for displaying a fyne.Menu.
 type Menu struct {
 	BaseWidget
 	alignment     fyne.TextAlign
 	Items         []fyne.CanvasObject
-	OnDismiss     func()
+	OnDismiss     func() `json:"-"`
 	activeItem    *menuItem
 	customSized   bool
 	containsCheck bool
+	isSubmenu     bool
 }
 
 // NewMenu creates a new Menu.
@@ -95,14 +99,18 @@ func (m *Menu) ActivatePrevious() {
 }
 
 // CreateRenderer returns a new renderer for the menu.
-//
-// Implements: fyne.Widget
 func (m *Menu) CreateRenderer() fyne.WidgetRenderer {
 	m.ExtendBaseWidget(m)
+	th := m.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+
 	box := newMenuBox(m.Items)
 	scroll := widget.NewVScroll(box)
 	scroll.SetMinSize(box.MinSize())
-	objects := []fyne.CanvasObject{scroll}
+	background := canvas.NewRectangle(th.Color(theme.ColorNameMenuBackground, v))
+	background.CornerRadius = th.Size(theme.SizeNameMenuRadius)
+	widget.ApplyShadowForLevel(&background.Shadow, widget.MenuLevel, th.Color(theme.ColorNameShadow, v))
+	objects := []fyne.CanvasObject{background, scroll}
 	for _, i := range m.Items {
 		if item, ok := i.(*menuItem); ok && item.Child() != nil {
 			objects = append(objects, item.Child())
@@ -110,10 +118,11 @@ func (m *Menu) CreateRenderer() fyne.WidgetRenderer {
 	}
 
 	return &menuRenderer{
-		widget.NewShadowingRenderer(objects, widget.MenuLevel),
+		widget.NewBaseRenderer(objects),
 		box,
 		m,
 		scroll,
+		background,
 	}
 }
 
@@ -140,16 +149,12 @@ func (m *Menu) DeactivateLastSubmenu() bool {
 }
 
 // MinSize returns the minimal size of the menu.
-//
-// Implements: fyne.Widget
 func (m *Menu) MinSize() fyne.Size {
 	m.ExtendBaseWidget(m)
 	return m.BaseWidget.MinSize()
 }
 
 // Refresh updates the menu to reflect changes in the data.
-//
-// Implements: fyne.Widget
 func (m *Menu) Refresh() {
 	for _, item := range m.Items {
 		item.Refresh()
@@ -166,9 +171,7 @@ func (m *Menu) getContainsCheck() bool {
 	return false
 }
 
-// Tapped catches taps on separators and the menu background. It doesn’t perform any action.
-//
-// Implements: fyne.Tappable
+// Tapped catches taps on separators and the menu background. It doesn't perform any action.
 func (m *Menu) Tapped(*fyne.PointEvent) {
 	// Hit a separator or padding -> do nothing.
 }
@@ -206,7 +209,9 @@ func (m *Menu) activateItem(item *menuItem) {
 	m.DeactivateChild()
 	m.activeItem = item
 	m.activeItem.Refresh()
-	m.Refresh()
+	if m.activeItem.child != nil {
+		m.Refresh()
+	}
 }
 
 func (m *Menu) setMenu(menu *fyne.Menu) {
@@ -222,27 +227,33 @@ func (m *Menu) setMenu(menu *fyne.Menu) {
 }
 
 type menuRenderer struct {
-	*widget.ShadowingRenderer
+	widget.BaseRenderer
 	box    *menuBox
 	m      *Menu
 	scroll *widget.Scroll
+	b      *canvas.Rectangle
 }
 
 func (r *menuRenderer) Layout(s fyne.Size) {
 	minSize := r.MinSize()
 	var boxSize fyne.Size
 	if r.m.customSized {
-		boxSize = minSize.Max(s)
+		boxSize = internal.MaxSizes(minSize, s)
 	} else {
 		boxSize = minSize
 	}
 	scrollSize := boxSize
-	if c := fyne.CurrentApp().Driver().CanvasForObject(r.m.super()); c != nil {
-		ap := fyne.CurrentApp().Driver().AbsolutePositionForObject(r.m.super())
-		pos, size := c.InteractiveArea()
-		bottomPad := c.Size().Height - pos.Y - size.Height
-		if ah := c.Size().Height - bottomPad - ap.Y; ah < boxSize.Height {
-			scrollSize = fyne.NewSize(boxSize.Width, ah)
+	if r.m.isSubmenu && s.Height < scrollSize.Height {
+		// the parent clamped the submenu to the canvas, scroll instead of growing back to full height
+		scrollSize.Height = s.Height
+	}
+
+	driver := fyne.CurrentApp().Driver()
+	if c := driver.CanvasForObject(r.m.super()); c != nil {
+		ap := driver.AbsolutePositionForObject(r.m.super())
+		_, areaSize := c.InteractiveArea()
+		if ah := areaSize.Height - ap.Y; ah < scrollSize.Height {
+			scrollSize.Height = ah
 		}
 	}
 	if scrollSize != r.m.Size() {
@@ -250,7 +261,7 @@ func (r *menuRenderer) Layout(s fyne.Size) {
 		return
 	}
 
-	r.LayoutShadow(scrollSize, fyne.NewPos(0, 0))
+	r.b.Resize(scrollSize)
 	r.scroll.Resize(scrollSize)
 	r.box.Resize(boxSize)
 	r.layoutActiveChild()
@@ -262,7 +273,11 @@ func (r *menuRenderer) MinSize() fyne.Size {
 
 func (r *menuRenderer) Refresh() {
 	r.layoutActiveChild()
-	r.ShadowingRenderer.RefreshShadow()
+	th := r.m.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+	r.b.FillColor = th.Color(theme.ColorNameMenuBackground, v)
+	r.b.Shadow.Color = th.Color(theme.ColorNameShadow, v)
+	r.b.CornerRadius = th.Size(theme.SizeNameMenuRadius)
 
 	for _, i := range r.m.Items {
 		if txt, ok := i.(*menuItem); ok {
@@ -280,17 +295,14 @@ func (r *menuRenderer) layoutActiveChild() {
 		return
 	}
 
-	if item.Child().Size().IsZero() {
-		item.Child().Resize(item.Child().MinSize())
-	}
-
+	child := item.Child()
+	childSize := child.MinSize()
 	itemSize := item.Size()
 	cp := fyne.NewPos(itemSize.Width, item.Position().Y)
 	d := fyne.CurrentApp().Driver()
 	c := d.CanvasForObject(item)
 	if c != nil {
 		absPos := d.AbsolutePositionForObject(item)
-		childSize := item.Child().Size()
 		if absPos.X+itemSize.Width+childSize.Width > c.Size().Width {
 			if absPos.X-childSize.Width >= 0 {
 				cp.X = -childSize.Width
@@ -298,14 +310,15 @@ func (r *menuRenderer) layoutActiveChild() {
 				cp.X = c.Size().Width - absPos.X - childSize.Width
 			}
 		}
-		requiredHeight := childSize.Height - theme.Padding()
-		availableHeight := c.Size().Height - absPos.Y
-		missingHeight := requiredHeight - availableHeight
-		if missingHeight > 0 {
-			cp.Y -= missingHeight
-		}
+		// Move the submenu up if it would extend below the canvas, but never above its top.
+		// Whatever still does not fit is scrolled, just like for the menu itself.
+		_, areaSize := c.InteractiveArea()
+		top := fyne.Max(0, fyne.Min(absPos.Y, areaSize.Height-childSize.Height))
+		cp.Y -= absPos.Y - top
+		childSize.Height = fyne.Min(childSize.Height, areaSize.Height-top)
 	}
-	item.Child().Move(cp)
+	child.Move(cp)
+	child.Resize(childSize)
 }
 
 type menuBox struct {
@@ -322,38 +335,30 @@ func newMenuBox(items []fyne.CanvasObject) *menuBox {
 }
 
 func (b *menuBox) CreateRenderer() fyne.WidgetRenderer {
-	background := canvas.NewRectangle(theme.BackgroundColor())
-	cont := fyne.NewContainerWithLayout(layout.NewVBoxLayout(), b.items...)
+	cont := &fyne.Container{Layout: layout.NewVBoxLayout(), Objects: b.items}
 	return &menuBoxRenderer{
-		BaseRenderer: widget.NewBaseRenderer([]fyne.CanvasObject{background, cont}),
+		BaseRenderer: widget.NewBaseRenderer([]fyne.CanvasObject{cont}),
 		b:            b,
-		background:   background,
 		cont:         cont,
 	}
 }
 
 type menuBoxRenderer struct {
 	widget.BaseRenderer
-	b          *menuBox
-	background *canvas.Rectangle
-	cont       *fyne.Container
+	b    *menuBox
+	cont *fyne.Container
 }
 
 var _ fyne.WidgetRenderer = (*menuBoxRenderer)(nil)
 
 func (r *menuBoxRenderer) Layout(size fyne.Size) {
-	s := fyne.NewSize(size.Width, size.Height+2*theme.Padding())
-	r.background.Resize(s)
-	r.cont.Resize(s)
-	r.cont.Move(fyne.NewPos(0, theme.Padding()))
+	r.cont.Resize(size)
 }
 
 func (r *menuBoxRenderer) MinSize() fyne.Size {
-	return r.cont.MinSize().Add(fyne.NewSize(0, 2*theme.Padding()))
+	return r.cont.MinSize()
 }
 
 func (r *menuBoxRenderer) Refresh() {
-	r.background.FillColor = theme.BackgroundColor()
-	r.background.Refresh()
 	canvas.Refresh(r.b)
 }

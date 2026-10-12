@@ -2,31 +2,26 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin linux openbsd freebsd
+//go:build darwin || linux || openbsd || freebsd
 
 package gl
 
 /*
-#cgo ios                LDFLAGS: -framework OpenGLES
-#cgo darwin,amd64,!ios  LDFLAGS: -framework OpenGL
-#cgo darwin,arm         LDFLAGS: -framework OpenGLES
-#cgo darwin,arm64       LDFLAGS: -framework OpenGLES
-#cgo linux              LDFLAGS: -lGLESv2
-#cgo openbsd            LDFLAGS: -L/usr/X11R6/lib/ -lGLESv2
-#cgo freebsd            LDFLAGS: -L/usr/local/X11R6/lib/ -lGLESv2
+#cgo ios          LDFLAGS: -framework OpenGLES
+#cgo darwin,!ios  LDFLAGS: -framework OpenGL
+#cgo linux        LDFLAGS: -lGLESv2
+#cgo openbsd      LDFLAGS: -L/usr/X11R6/lib/ -lGLESv2
+#cgo freebsd      LDFLAGS: -L/usr/local/lib/ -lGLESv2
 
-#cgo android            CFLAGS: -Dos_android
-#cgo ios                CFLAGS: -Dos_ios
-#cgo darwin,amd64,!ios  CFLAGS: -Dos_osx
-#cgo darwin,arm         CFLAGS: -Dos_ios
-#cgo darwin,arm64       CFLAGS: -Dos_ios
-#cgo darwin             CFLAGS: -DGL_SILENCE_DEPRECATION
-#cgo linux              CFLAGS: -Dos_linux
-#cgo openbsd            CFLAGS: -Dos_openbsd
-#cgo freebsd            CFLAGS: -Dos_freebsd
-
-#cgo openbsd            CFLAGS: -I/usr/X11R6/include/
-#cgo freebsd            CFLAGS: -I/usr/local/X11R6/include/
+#cgo android      CFLAGS: -Dos_android
+#cgo ios          CFLAGS: -Dos_ios
+#cgo darwin,!ios  CFLAGS: -Dos_macos
+#cgo darwin       CFLAGS: -DGL_SILENCE_DEPRECATION
+#cgo linux        CFLAGS: -Dos_linux
+#cgo openbsd      CFLAGS: -Dos_openbsd
+#cgo freebsd      CFLAGS: -Dos_freebsd
+#cgo openbsd      CFLAGS: -I/usr/X11R6/include/
+#cgo freebsd      CFLAGS: -I/usr/local/include/
 
 #include <stdint.h>
 #include "work.h"
@@ -47,15 +42,28 @@ uintptr_t process(struct fnargs* cargs, char* parg0, char* parg1, char* parg2, i
 */
 import "C"
 
-import "unsafe"
+import (
+	"sync/atomic"
+	"unsafe"
+)
 
-const workbufLen = 3
+const (
+	workbufLen = 3
+
+	// Coalesced wakeups make the worker drain in bursts, so the queue has to
+	// absorb a frame's worth of calls before enqueue has to wait.
+	workQueueLen = 256
+)
 
 type context struct {
 	cptr  uintptr
 	debug int32
 
 	workAvailable chan struct{}
+
+	// Producers signal only on the idle to awake transition, so a burst of N
+	// calls wakes the worker once rather than N times.
+	consumerIdle atomic.Bool
 
 	// work is a queue of calls to execute.
 	work chan call
@@ -77,6 +85,26 @@ type context struct {
 
 func (ctx *context) WorkAvailable() <-chan struct{} { return ctx.workAvailable }
 
+func (ctx *context) HasWork() bool { return len(ctx.work) > 0 }
+
+func (ctx *context) signal() {
+	if !ctx.consumerIdle.CompareAndSwap(true, false) {
+		return // worker is awake and will drain the queue itself
+	}
+	select {
+	case ctx.workAvailable <- struct{}{}:
+	default: // a wakeup is already pending
+	}
+}
+
+// drained reports whether the queue is empty and the worker may stop. It
+// publishes the idle state first, because a call arriving while the worker is
+// still awake is not signalled by its producer and has to be caught here.
+func (ctx *context) drained() bool {
+	ctx.consumerIdle.Store(true)
+	return len(ctx.work) == 0
+}
+
 type context3 struct {
 	*context
 }
@@ -87,9 +115,10 @@ type context3 struct {
 func NewContext() (Context, Worker) {
 	glctx := &context{
 		workAvailable: make(chan struct{}, 1),
-		work:          make(chan call, workbufLen*4),
+		work:          make(chan call, workQueueLen),
 		retvalue:      make(chan C.uintptr_t),
 	}
+	glctx.consumerIdle.Store(true)
 	if C.GLES_VERSION == "GL_ES_2_0" {
 		return glctx, glctx
 	}
@@ -104,11 +133,7 @@ func Version() string {
 
 func (ctx *context) enqueue(c call) uintptr {
 	ctx.work <- c
-
-	select {
-	case ctx.workAvailable <- struct{}{}:
-	default:
-	}
+	ctx.signal()
 
 	if c.blocking {
 		return uintptr(<-ctx.retvalue)
@@ -125,7 +150,10 @@ func (ctx *context) DoWork() {
 		case w := <-ctx.work:
 			queue = append(queue, w)
 		default:
-			return
+			if ctx.drained() {
+				return
+			}
+			continue
 		}
 		blocking := queue[len(queue)-1].blocking
 	enqueue:
@@ -154,11 +182,11 @@ func (ctx *context) DoWork() {
 	}
 }
 
-func init() {
-	if unsafe.Sizeof(C.GLint(0)) != unsafe.Sizeof(int32(0)) {
-		panic("GLint is not an int32")
-	}
-}
+// If C.GLint is not int32, one of these will cause a division by zero compile error.
+const (
+	_ = 1 / int(unsafe.Sizeof(C.GLint(0))/unsafe.Sizeof(int32(0)))
+	_ = 1 / int(unsafe.Sizeof(int32(0))/unsafe.Sizeof(C.GLint(0)))
+)
 
 // cString creates C string off the Go heap.
 // ret is a *char.

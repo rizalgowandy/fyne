@@ -1,4 +1,4 @@
-// +build !mobile
+//go:build !mobile
 
 package widget_test
 
@@ -14,8 +14,7 @@ import (
 
 func TestPopUpMenu_KeyboardControl(t *testing.T) {
 	var lastTriggered string
-	m, w := setupPopUpMenuWithSubmenusTest(func(triggered string) { lastTriggered = triggered })
-	defer tearDownPopUpMenuTest(w)
+	m, w := setupPopUpMenuWithSubmenusTest(t, func(triggered string) { lastTriggered = triggered })
 	c := w.Canvas()
 	m.ShowAtPosition(fyne.NewPos(13, 45))
 

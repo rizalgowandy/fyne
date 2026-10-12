@@ -9,7 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,7 +21,8 @@ import (
 )
 
 func goIOSBuild(pkg *packages.Package, bundleID string, archs []string,
-	appName, version string, build int, release bool, cert, profile string) (map[string]bool, error) {
+	appName, version string, build int, release bool, cert, profile string,
+) (map[string]bool, error) {
 	src := pkg.PkgPath
 	buildO = rfc1034Label(appName) + ".app"
 	// Detect the team ID
@@ -51,9 +52,10 @@ func goIOSBuild(pkg *packages.Package, bundleID string, archs []string,
 	infoplist := new(bytes.Buffer)
 	if err := infoplistTmpl.Execute(infoplist, infoplistTmplData{
 		BundleID: bundleID,
-		Name:     strings.Title(appName),
+		Name:     strings.Title(appName), //lint:ignore SA1019 This is fine for our use case.
 		Version:  version,
 		Build:    build,
+		Legacy:   len(allArchs["ios"]) > 2,
 	}); err != nil {
 		return nil, err
 	}
@@ -75,7 +77,7 @@ func goIOSBuild(pkg *packages.Package, bundleID string, archs []string,
 			printcmd("echo \"%s\" > %s", file.contents, file.name)
 		}
 		if !buildN {
-			if err := ioutil.WriteFile(file.name, file.contents, 0600); err != nil {
+			if err := os.WriteFile(file.name, file.contents, 0o600); err != nil {
 				return nil, err
 			}
 		}
@@ -153,6 +155,16 @@ func goIOSBuild(pkg *packages.Package, bundleID string, archs []string,
 			return nil, err
 		}
 	}
+
+	// Use codesign to remove the codesign certificate for the built application
+	// so that it can run in iOS simulator.
+	if buildTarget == "iossimulator" {
+		if out, err := execabs.Command("codesign", "--force", "--sign", "-", buildO).CombinedOutput(); err != nil {
+			printcmd("codesign --force --sign --keychain %s\n%s", buildO, out)
+			return nil, err
+		}
+	}
+
 	return nmpkgs, nil
 }
 
@@ -211,7 +223,7 @@ func iosCopyAssets(pkg *packages.Package, xcodeProjDir string) error {
 	if err != nil {
 		return err
 	}
-	return filepath.Walk(srcAssets, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(srcAssets, func(path string, info fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -264,6 +276,7 @@ type infoplistTmplData struct {
 	Name     string
 	Version  string
 	Build    int
+	Legacy   bool
 }
 
 var infoplistTmpl = template.Must(template.New("infoplist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -321,7 +334,11 @@ var infoplistTmpl = template.Must(template.New("infoplist").Parse(`<?xml version
   <string>LaunchScreen</string>
   <key>UIRequiredDeviceCapabilities</key>
   <array>
+{{ if .Legacy }}
     <string>armv7</string>
+{{ else }}
+    <string>arm64</string>
+{{ end }}
   </array>
   <key>UIRequiresFullScreen</key>
   <true/>
@@ -507,11 +524,13 @@ var projPbxprojTmpl = template.Must(template.New("projPbxproj").Parse(`// !$*UTF
         GCC_WARN_UNUSED_FUNCTION = YES;
         GCC_WARN_UNUSED_VARIABLE = YES;
         IPHONEOS_DEPLOYMENT_TARGET = 9.0;
+        OS_ACTIVITY_MODE = "disabled";
         MTL_ENABLE_DEBUG_INFO = {{if .Debug}}YES{{else}}NO{{end}};
         PRODUCT_BUNDLE_IDENTIFIER = {{.BundleID}};
         PROVISIONING_PROFILE_SPECIFIER = "{{.Profile}}";
         SDKROOT = iphoneos;
         TARGETED_DEVICE_FAMILY = "1,2";
+        OS_ACTIVITY_MODE = "disable";
         VALIDATE_PRODUCT = YES;
         {{if not .BitcodeEnabled}}ENABLE_BITCODE = NO;{{end}}
       };

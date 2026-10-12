@@ -1,7 +1,6 @@
 package canvas_test
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -27,7 +26,7 @@ func TestNewHorizontalGradient(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -53,7 +52,7 @@ func TestNewHorizontalGradient_Flipped(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -78,7 +77,7 @@ func TestNewVerticalGradient(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -104,7 +103,7 @@ func TestNewVerticalGradient_Flipped(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -118,6 +117,7 @@ func TestNewVerticalGradient_Flipped(t *testing.T) {
 
 func TestNewLinearGradient_45(t *testing.T) {
 	negative := canvas.NewLinearGradient(color.Black, color.Transparent, 45.0)
+	negativeBackward := canvas.NewLinearGradient(color.Black, color.Transparent, -315.0)
 
 	smallImg := negative.Generate(5, 5)
 	expectedAlphaValues := [][]uint8{
@@ -129,7 +129,14 @@ func TestNewLinearGradient_45(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
+		}
+	}
+
+	smallBackwardImg := negativeBackward.Generate(5, 5)
+	for y, xv := range expectedAlphaValues {
+		for x, v := range xv {
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallBackwardImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -156,7 +163,7 @@ func TestNewLinearGradient_225(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -183,7 +190,7 @@ func TestNewLinearGradient_135(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -210,7 +217,7 @@ func TestNewLinearGradient_315(t *testing.T) {
 	}
 	for y, xv := range expectedAlphaValues {
 		for x, v := range xv {
-			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+			assert.Equal(t, color.NRGBA{0, 0, 0, v}, smallImg.At(x, y), "alpha value at %d,%d", x, y)
 		}
 	}
 
@@ -238,7 +245,7 @@ func TestNewRadialGradient(t *testing.T) {
 		}
 		for y, xv := range expectedAlphaValues {
 			for x, v := range xv {
-				assert.Equal(t, color.NRGBA{0, 0, 0, v}, imgOddDiameter.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+				assert.Equal(t, color.NRGBA{0, 0, 0, v}, imgOddDiameter.At(x, y), "alpha value at %d,%d", x, y)
 			}
 		}
 	}
@@ -255,7 +262,7 @@ func TestNewRadialGradient(t *testing.T) {
 		}
 		for y, xv := range expectedAlphaValues {
 			for x, v := range xv {
-				assert.Equal(t, color.NRGBA{0, 0, 0, v}, imgEvenDiameter.At(x, y), fmt.Sprintf("alpha value at %d,%d", x, y))
+				assert.Equal(t, color.NRGBA{0, 0, 0, v}, imgEvenDiameter.At(x, y), "alpha value at %d,%d", x, y)
 			}
 		}
 	}

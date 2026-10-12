@@ -70,7 +70,8 @@ func TestFocusManager_Focus(t *testing.T) {
 
 	t.Run("focus visible inside hidden", func(t *testing.T) {
 		manager, entry1, _, visibleInsideHidden, _, _, _ := setupFocusManager(t)
-		itBehavesLikeDoingNothing(t, manager, visibleInsideHidden, entry1, true)
+		// visible items hidden inside hidden widgets may not be discovered in traversal
+		itBehavesLikeDoingNothing(t, manager, visibleInsideHidden, entry1, false)
 	})
 
 	t.Run("focus foreign", func(t *testing.T) {
@@ -145,9 +146,11 @@ func TestFocusManager_FocusPrevious(t *testing.T) {
 	assert.False(t, entry1.focused)
 }
 
-var _ fyne.Widget = (*focusable)(nil)
-var _ fyne.Focusable = (*focusable)(nil)
-var _ fyne.Disableable = (*focusable)(nil)
+var (
+	_ fyne.Widget      = (*focusable)(nil)
+	_ fyne.Focusable   = (*focusable)(nil)
+	_ fyne.Disableable = (*focusable)(nil)
+)
 
 type focusable struct {
 	widget.DisableableWidget
@@ -182,6 +185,7 @@ func setupFocusManager(t *testing.T) (m *app.FocusManager, entry1, hidden, visib
 	hidden = &focusable{
 		child: visibleInsideHidden,
 	}
+	hidden.Refresh()
 	hidden.Hide()
 	entry2 = &focusable{}
 	disabled = &focusable{}
@@ -191,5 +195,5 @@ func setupFocusManager(t *testing.T) (m *app.FocusManager, entry1, hidden, visib
 	require.Nil(t, m.Focused())
 	require.False(t, hidden.Visible())
 	require.True(t, visibleInsideHidden.Visible())
-	return
+	return m, entry1, hidden, visibleInsideHidden, entry2, disabled, entry3
 }

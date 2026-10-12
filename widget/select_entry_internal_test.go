@@ -11,8 +11,7 @@ import (
 )
 
 func TestSelectEntry_Disableable(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	options := []string{"A", "B", "C"}
 	e := NewSelectEntry(options)
@@ -30,7 +29,8 @@ func TestSelectEntry_Disableable(t *testing.T) {
 	test.TapCanvas(c, switchPos)
 	test.AssertRendersToMarkup(t, "select_entry/disableable_enabled_opened.xml", c)
 
-	test.TapCanvas(c, fyne.NewPos(0, 0))
+	areaPos, _ := c.InteractiveArea()
+	test.TapCanvas(c, areaPos)
 	test.AssertRendersToMarkup(t, "select_entry/disableable_enabled_tapped_selected.xml", c)
 
 	e.Disable()
@@ -49,8 +49,7 @@ func TestSelectEntry_Disableable(t *testing.T) {
 }
 
 func TestSelectEntry_DropDown(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	options := []string{"A", "B", "C"}
 	e := NewSelectEntry(options)
@@ -81,8 +80,7 @@ func TestSelectEntry_DropDown(t *testing.T) {
 }
 
 func TestSelectEntry_DropDownMove(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	e := NewSelectEntry([]string{"one"})
 	w := test.NewWindow(e)
@@ -90,30 +88,32 @@ func TestSelectEntry_DropDownMove(t *testing.T) {
 	entrySize := e.MinSize()
 	w.Resize(entrySize.Add(fyne.NewSize(100, 100)))
 	e.Resize(entrySize)
+	inset, _ := w.Canvas().InteractiveArea()
 
 	// open the popup
 	test.Tap(e.ActionItem.(fyne.Tappable))
 
 	// first movement
 	e.Move(fyne.NewPos(10, 10))
-	assert.Equal(t, fyne.NewPos(10, 10), e.Entry.Position())
-	assert.Equal(t,
-		fyne.NewPos(10, 10+entrySize.Height-theme.InputBorderSize()),
+	assert.Equal(t, fyne.NewPos(10, 10), e.Position())
+	assert.Equal(
+		t,
+		fyne.NewPos(10, 10+entrySize.Height-theme.InputBorderSize()).Subtract(inset),
 		e.popUp.Position(),
 	)
 
 	// second movement
 	e.Move(fyne.NewPos(30, 27))
-	assert.Equal(t, fyne.NewPos(30, 27), e.Entry.Position())
-	assert.Equal(t,
-		fyne.NewPos(30, 27+entrySize.Height-theme.InputBorderSize()),
+	assert.Equal(t, fyne.NewPos(30, 27), e.Position())
+	assert.Equal(
+		t,
+		fyne.NewPos(30, 27+entrySize.Height-theme.InputBorderSize()).Subtract(inset),
 		e.popUp.Position(),
 	)
 }
 
 func TestSelectEntry_DropDownResize(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	options := []string{"A", "B", "C"}
 	e := NewSelectEntry(options)
@@ -140,57 +140,48 @@ func TestSelectEntry_DropDownResize(t *testing.T) {
 
 func TestSelectEntry_MinSize(t *testing.T) {
 	smallOptions := []string{"A", "B", "C"}
-
 	largeOptions := []string{"Large Option A", "Larger Option B", "Very Large Option C"}
-	largeOptionsMinWidth := optionsMinSize(largeOptions).Width
-
 	labelHeight := NewLabel("W").MinSize().Height
 
+	// since we scroll content and don't prop window open with popup all combinations should be the same min
 	tests := map[string]struct {
 		placeholder string
 		value       string
 		options     []string
-		want        fyne.Size
 	}{
-		"empty": {
-			want: fyne.NewSize(emptyTextWidth()+dropDownIconWidth()+2*theme.Padding(), labelHeight),
-		},
+		"empty": {},
 		"empty + small options": {
 			options: smallOptions,
-			want:    fyne.NewSize(emptyTextWidth()+dropDownIconWidth()+2*theme.Padding(), labelHeight),
 		},
 		"empty + large options": {
 			options: largeOptions,
-			want:    fyne.NewSize(largeOptionsMinWidth, labelHeight),
 		},
 		"value": {
 			value: "foo", // in a scroller
-			want:  fyne.NewSize(emptyTextWidth()+dropDownIconWidth()+2*theme.Padding(), labelHeight),
 		},
 		"large value + small options": {
 			value:   "large", // in a scroller
 			options: smallOptions,
-			want:    fyne.NewSize(emptyTextWidth()+dropDownIconWidth()+2*theme.Padding(), labelHeight),
 		},
 		"small value + large options": {
 			value:   "small", // in a scroller
 			options: largeOptions,
-			want:    fyne.NewSize(largeOptionsMinWidth, labelHeight),
 		},
 	}
+
+	minSize := fyne.NewSize(emptyTextWidth()+dropDownIconWidth()+2*theme.Padding(), labelHeight)
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			e := NewSelectEntry(tt.options)
 			e.PlaceHolder = tt.placeholder
 			e.Text = tt.value
-			assert.Equal(t, tt.want, e.MinSize())
+			assert.Equal(t, minSize, e.MinSize())
 		})
 	}
 }
 
 func TestSelectEntry_SetOptions(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	e := NewSelectEntry([]string{"A", "B", "C"})
 	w := test.NewWindow(e)
@@ -211,8 +202,7 @@ func TestSelectEntry_SetOptions(t *testing.T) {
 }
 
 func TestSelectEntry_SetOptions_Empty(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	e := NewSelectEntry([]string{})
 	w := test.NewWindow(e)
@@ -234,22 +224,4 @@ func dropDownIconWidth() float32 {
 
 func emptyTextWidth() float32 {
 	return NewLabel("M").MinSize().Width
-}
-
-func optionsMinSize(options []string) fyne.Size {
-	var labels []*Label
-	for _, option := range options {
-		labels = append(labels, NewLabel(option))
-	}
-	minWidth := float32(0)
-	minHeight := float32(0)
-	for _, label := range labels {
-		if minWidth < label.MinSize().Width {
-			minWidth = label.MinSize().Width
-		}
-		minHeight += label.MinSize().Height
-	}
-	// padding between all options
-	minHeight += float32(len(labels)-1) * theme.Padding()
-	return fyne.NewSize(minWidth, minHeight)
 }

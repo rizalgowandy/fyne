@@ -40,7 +40,7 @@ func TestDocTabs_Empty(t *testing.T) {
 	tabs = &container.DocTabs{}
 	assert.Equal(t, 0, len(tabs.Items))
 	assert.Nil(t, tabs.Selected())
-	assert.NotNil(t, test.WidgetRenderer(tabs)) // doesn't crash
+	assert.NotNil(t, test.TempWidgetRenderer(t, tabs)) // doesn't crash
 }
 
 func TestDocTabs_Hidden_AsChild(t *testing.T) {
@@ -130,4 +130,54 @@ func TestDocTabs_RemoveIndex(t *testing.T) {
 	tabs.SelectIndex(0)
 	tabs.RemoveIndex(0)
 	assert.Equal(t, -1, tabs.SelectedIndex()) // check deselected and no panic
+}
+
+func TestDocTabs_EnableItem(t *testing.T) {
+	tab1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Test1")}
+	tab2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Test2")}
+	tabs := container.NewDocTabs(tab1, tab2)
+	tabs.DisableItem(tab1)
+
+	assert.True(t, tab1.Disabled())
+
+	tabs.EnableItem(tab1)
+	assert.False(t, tab1.Disabled())
+}
+
+func TestDocTabs_EnableIndex(t *testing.T) {
+	tab1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Test1")}
+	tab2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Test2")}
+	tabs := container.NewDocTabs(tab1, tab2)
+	tabs.DisableItem(tab1)
+
+	assert.True(t, tab1.Disabled())
+
+	tabs.EnableIndex(0)
+	assert.False(t, tab1.Disabled())
+}
+
+func TestDocTabs_DisableItem(t *testing.T) {
+	tab1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Test1")}
+	tab2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Test2")}
+	tabs := container.NewDocTabs(tab1, tab2)
+
+	assert.False(t, tab1.Disabled())
+
+	tabs.DisableItem(tab1)
+	assert.True(t, tab1.Disabled())
+
+	assert.Equal(t, 1, tabs.SelectedIndex())
+}
+
+func TestDocTabs_DisableIndex(t *testing.T) {
+	tab1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Test1")}
+	tab2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Test2")}
+	tabs := container.NewDocTabs(tab1, tab2)
+
+	assert.False(t, tab1.Disabled())
+
+	tabs.DisableIndex(0)
+	assert.True(t, tab1.Disabled())
+
+	assert.Equal(t, 1, tabs.SelectedIndex())
 }

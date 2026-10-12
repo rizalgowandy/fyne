@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -17,8 +18,8 @@ func TestButton_MinSize(t *testing.T) {
 	button := widget.NewButton("Hi", nil)
 	min := button.MinSize()
 
-	assert.True(t, min.Width > theme.Padding()*2)
-	assert.True(t, min.Height > theme.Padding()*2)
+	assert.Greater(t, min.Width, theme.InnerPadding())
+	assert.Greater(t, min.Height, theme.InnerPadding())
 }
 
 func TestButton_SetText(t *testing.T) {
@@ -28,7 +29,7 @@ func TestButton_SetText(t *testing.T) {
 	button.SetText("Longer")
 	min2 := button.MinSize()
 
-	assert.True(t, min2.Width > min1.Width)
+	assert.Greater(t, min2.Width, min1.Width)
 	assert.Equal(t, min2.Height, min1.Height)
 }
 
@@ -39,7 +40,7 @@ func TestButton_MinSize_Icon(t *testing.T) {
 	button.SetIcon(theme.CancelIcon())
 	min2 := button.MinSize()
 
-	assert.True(t, min2.Width > min1.Width)
+	assert.Greater(t, min2.Width, min1.Width)
 	assert.Equal(t, min2.Height, min1.Height)
 }
 
@@ -64,10 +65,27 @@ func TestButton_Tapped(t *testing.T) {
 	}()
 }
 
+func TestButton_Tapped_Unfocus(t *testing.T) {
+	e := widget.NewEntry()
+	button := widget.NewButton("Hi", func() {
+	})
+
+	w := test.NewWindow(&fyne.Container{
+		Layout:  layout.NewGridLayoutWithColumns(1),
+		Objects: []fyne.CanvasObject{e, button},
+	})
+	c := w.Canvas()
+
+	c.Focus(e)
+	assert.Equal(t, e, c.Focused())
+
+	test.Tap(button)
+	assert.Nil(t, c.Focused())
+}
+
 func TestButton_Disable(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-	test.ApplyTheme(t, theme.LightTheme())
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
 
 	tapped := false
 	button := widget.NewButtonWithIcon("Test", theme.HomeIcon(), func() {
@@ -86,30 +104,18 @@ func TestButton_Disable(t *testing.T) {
 }
 
 func TestButton_Enable(t *testing.T) {
-	tapped := make(chan bool)
+	tapped := false
 	button := widget.NewButton("Test", func() {
-		tapped <- true
+		tapped = true
 	})
 
 	button.Disable()
-	go test.Tap(button)
-	func() {
-		select {
-		case <-tapped:
-			assert.Fail(t, "Button should have been disabled")
-		case <-time.After(1 * time.Second):
-		}
-	}()
+	test.Tap(button)
+	assert.False(t, tapped, "Button should be disabled")
 
 	button.Enable()
-	go test.Tap(button)
-	func() {
-		select {
-		case <-tapped:
-		case <-time.After(1 * time.Second):
-			assert.Fail(t, "Button should have been re-enabled")
-		}
-	}()
+	test.Tap(button)
+	assert.True(t, tapped, "Button should have been re-enabled")
 }
 
 func TestButton_Disabled(t *testing.T) {
@@ -121,10 +127,22 @@ func TestButton_Disabled(t *testing.T) {
 	assert.False(t, button.Disabled())
 }
 
+func TestButton_LowImportance(t *testing.T) {
+	test.NewTempApp(t)
+
+	b := &widget.Button{Text: "Text", Icon: theme.HomeIcon(), Importance: widget.LowImportance}
+	w := test.NewWindow(b)
+	defer w.Close()
+
+	test.AssertImageMatches(t, "button/low_importance.png", w.Canvas().Capture())
+
+	b.Disable()
+	test.AssertImageMatches(t, "button/low_importance_disabled.png", w.Canvas().Capture())
+}
+
 func TestButton_Hover(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-	test.ApplyTheme(t, theme.LightTheme())
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
 
 	b := widget.NewButtonWithIcon("Test", theme.HomeIcon(), func() {})
 	w := test.NewWindow(b)
@@ -151,8 +169,7 @@ func TestButton_Hover(t *testing.T) {
 }
 
 func TestButton_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	for name, tt := range map[string]struct {
 		text      string
@@ -279,8 +296,7 @@ func TestButton_Layout(t *testing.T) {
 }
 
 func TestButton_ChangeTheme(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	b := widget.NewButton("Test", func() {})
 	w := test.NewWindow(b)
@@ -297,4 +313,25 @@ func TestButton_ChangeTheme(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		test.AssertImageMatches(t, "button/theme_changed.png", w.Canvas().Capture())
 	})
+}
+
+func TestButtonCompatImportance(t *testing.T) {
+	// Test backward compatibility of widget.Importance
+	var imp any = widget.HighImportance
+	btn := widget.NewButton("test", func() {})
+	btn.Importance = imp.(widget.ButtonImportance)
+}
+
+func TestButtonSuccess(t *testing.T) {
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
+
+	b := widget.NewButtonWithIcon("Test", theme.HomeIcon(), func() {})
+	w := test.NewWindow(b)
+	defer w.Close()
+
+	b.Importance = widget.SuccessImportance
+	b.Refresh()
+
+	test.AssertImageMatches(t, "button/success_importance.png", w.Canvas().Capture())
 }

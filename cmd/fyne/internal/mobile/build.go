@@ -13,7 +13,10 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
+
+	"fyne.io/fyne/v2/cmd/fyne/internal/util"
 
 	"golang.org/x/sys/execabs"
 	"golang.org/x/tools/go/packages"
@@ -72,15 +75,19 @@ const (
 
 func runBuild(cmd *command) (err error) {
 	_, err = runBuildImpl(cmd)
-	return
+	return err
 }
 
 // AppOutputName provides the name of a build resource for a given os - "ios" or "android".
-func AppOutputName(os, name string) string {
+func AppOutputName(os, name string, release bool) string {
 	switch os {
-	case "android":
-		return androidPkgName(name) + ".apk"
-	case "ios":
+	case "android/arm", "android/arm64", "android/amd64", "android/386", "android":
+		if release {
+			return androidPkgName(name) + ".aab"
+		} else {
+			return androidPkgName(name) + ".apk"
+		}
+	case "ios", "iossimulator":
 		return rfc1034Label(name) + ".app"
 	}
 
@@ -143,7 +150,7 @@ func runBuildImpl(cmd *command) (*packages.Package, error) {
 			}
 			return pkg, nil
 		}
-		target := 30
+		target := 35
 		if !buildRelease {
 			target = 29 // TODO once we have gomobile debug signing working for v2 android signs
 		}
@@ -225,22 +232,22 @@ func extractPkgs(nm string, path string) (map[string]bool, error) {
 
 var xout io.Writer = os.Stderr
 
-func printcmd(format string, args ...interface{}) {
+func printcmd(format string, args ...any) {
 	cmd := fmt.Sprintf(format+"\n", args...)
 	if tmpdir != "" {
-		cmd = strings.Replace(cmd, tmpdir, "$WORK", -1)
+		cmd = strings.ReplaceAll(cmd, tmpdir, "$WORK")
 	}
 	if androidHome := os.Getenv("ANDROID_HOME"); androidHome != "" {
-		cmd = strings.Replace(cmd, androidHome, "$ANDROID_HOME", -1)
+		cmd = strings.ReplaceAll(cmd, androidHome, "$ANDROID_HOME")
 	}
 	if gomobilepath != "" {
-		cmd = strings.Replace(cmd, gomobilepath, "$GOMOBILE", -1)
+		cmd = strings.ReplaceAll(cmd, gomobilepath, "$GOMOBILE")
 	}
 	if gopath := goEnv("GOPATH"); gopath != "" {
-		cmd = strings.Replace(cmd, gopath, "$GOPATH", -1)
+		cmd = strings.ReplaceAll(cmd, gopath, "$GOPATH")
 	}
 	if env := os.Getenv("HOMEPATH"); env != "" {
-		cmd = strings.Replace(cmd, env, "$HOMEPATH", -1)
+		cmd = strings.ReplaceAll(cmd, env, "$HOMEPATH")
 	}
 	fmt.Fprint(xout, cmd)
 }
@@ -266,10 +273,15 @@ var (
 )
 
 // RunNewBuild executes a new mobile build for the specified configuration
-func RunNewBuild(target, appID, icon, name, version string, build int, release bool, cert, profile string) error {
+func RunNewBuild(target, appID, icon, name, version string, build int, release, distribution bool, cert, profile string, tags []string) error {
 	buildTarget = target
 	buildBundleID = appID
-	buildRelease = release
+	buildRelease = distribution
+	buildTags = tags
+	if release {
+		buildLdflags = "-w"
+		buildTrimpath = true
+	}
 
 	cmd := cmdBuild
 	cmd.Flag = flag.FlagSet{}
@@ -372,8 +384,11 @@ func parseBuildTarget(buildTarget string) (os string, archs []string, _ error) {
 	archNames := []string{}
 	for i, p := range strings.Split(buildTarget, ",") {
 		osarch := strings.SplitN(p, "/", 2) // len(osarch) > 0
-		if osarch[0] != "android" && osarch[0] != "ios" {
+		if !util.IsAndroid(osarch[0]) && !util.IsIOS(osarch[0]) {
 			return "", nil, fmt.Errorf(`unsupported os`)
+		}
+		if osarch[0] == "iossimulator" {
+			osarch[0] = "ios"
 		}
 
 		if i == 0 {
@@ -418,6 +433,19 @@ func parseBuildTarget(buildTarget string) (os string, archs []string, _ error) {
 	if os == "ios" {
 		targetOS = "darwin"
 	}
+
+	if buildTarget == "iossimulator" {
+		if before116 {
+			// If the build target is iossimulator, and the go distribution also before
+			// 1.16, then we can only build amd64 arch app for simulators. Because
+			// arm64 simulators is only supported after go 1.16.
+			allArchs[os] = []string{"amd64"}
+		} else {
+			// Otherwise, the iossimulator arch is depending on the host arch.
+			allArchs[os] = []string{runtime.GOARCH}
+		}
+	}
+
 	if all {
 		return targetOS, allArchs[os], nil
 	}

@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"encoding"
 	"encoding/xml"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"sort"
@@ -59,7 +59,7 @@ func printrecurse(t *testing.T, pl *Pool, el *Element, ws string) {
 
 func TestBootstrap(t *testing.T) {
 	r := require.New(t)
-	bin, err := ioutil.ReadFile("testdata/bootstrap.bin")
+	bin, err := os.ReadFile("testdata/bootstrap.bin")
 	r.NoError(err)
 
 	// unmarshal binary xml and store byte indices of decoded resources.
@@ -158,7 +158,7 @@ func TestEncode(t *testing.T) {
 	bx, err := UnmarshalXML(f, false, 30)
 	r.NoError(err)
 
-	bin, err := ioutil.ReadFile("testdata/bootstrap.bin")
+	bin, err := os.ReadFile("testdata/bootstrap.bin")
 	r.NoError(err)
 
 	bxml := new(XML)
@@ -247,7 +247,7 @@ func compareElements(have, want *XML) error {
 		}
 	}
 	if buf.Len() > 0 {
-		return fmt.Errorf(buf.String())
+		return errors.New(buf.String())
 	}
 	return nil
 }
@@ -270,7 +270,7 @@ func rtou(a []TableRef) (b []uint32) {
 	for _, x := range a {
 		b = append(b, uint32(x))
 	}
-	return
+	return b
 }
 
 func compareUint32s(t *testing.T, a, b []uint32) error {
@@ -329,7 +329,7 @@ func compareStrings(t *testing.T, a, b []string) error {
 		}
 		if err == nil && v == "__" {
 			if !strings.HasPrefix(x, "4.0.") {
-				// as of the time of this writing, the current version of build tools being targetted
+				// as of the time of this writing, the current version of build tools being targeted
 				// reports 4.0.4-1406430. Previously, this was 4.0.3. This number is likely still due
 				// to change so only report error if 4.x incremented.
 				//
@@ -445,7 +445,7 @@ func TestTableMarshal(t *testing.T) {
 	err = xtbl.UnmarshalBinary(bin)
 	r.NoError(err)
 
-	r.Equal(len(tbl.pool.strings), xtbl.pool.strings)
+	r.Equal(len(tbl.pool.strings), len(xtbl.pool.strings))
 	r.Equal(len(tbl.pkgs), len(xtbl.pkgs))
 
 	pkg, xpkg := tbl.pkgs[0], xtbl.pkgs[0]

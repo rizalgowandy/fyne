@@ -3,9 +3,9 @@ package glfw
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/internal/widget"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 )
 
@@ -35,11 +35,10 @@ func NewMenuBar(mainMenu *fyne.MainMenu, canvas fyne.Canvas) *MenuBar {
 }
 
 // CreateRenderer returns a new renderer for the menu bar.
-//
-// Implements: fyne.Widget
 func (b *MenuBar) CreateRenderer() fyne.WidgetRenderer {
-	cont := fyne.NewContainerWithLayout(layout.NewHBoxLayout(), b.Items...)
-	background := canvas.NewRectangle(theme.ButtonColor())
+	cont := container.NewHBox(b.Items...)
+	background := canvas.NewRectangle(theme.Color(theme.ColorNameBackground))
+	widget.ApplyShadowForLevel(&background.Shadow, widget.MenuBarLevel, theme.Color(theme.ColorNameShadow))
 	underlay := &menuBarUnderlay{action: b.deactivate}
 	underlay.ExtendBaseWidget(underlay)
 	objects := []fyne.CanvasObject{underlay, background, cont}
@@ -47,7 +46,7 @@ func (b *MenuBar) CreateRenderer() fyne.WidgetRenderer {
 		objects = append(objects, item.(*menuBarItem).Child())
 	}
 	return &menuBarRenderer{
-		widget.NewShadowingRenderer(objects, widget.MenuLevel),
+		widget.NewBaseRenderer(objects),
 		b,
 		background,
 		underlay,
@@ -68,9 +67,7 @@ func (b *MenuBar) Toggle() {
 }
 
 func (b *MenuBar) activateChild(item *menuBarItem) {
-	if !b.active {
-		b.active = true
-	}
+	b.active = true
 	if item.Child() != nil {
 		item.Child().DeactivateChild()
 	}
@@ -122,7 +119,7 @@ func (b *MenuBar) toggle(item *menuBarItem) {
 }
 
 type menuBarRenderer struct {
-	*widget.ShadowingRenderer
+	widget.BaseRenderer
 	b          *MenuBar
 	background *canvas.Rectangle
 	underlay   *menuBarUnderlay
@@ -130,7 +127,6 @@ type menuBarRenderer struct {
 }
 
 func (r *menuBarRenderer) Layout(size fyne.Size) {
-	r.LayoutShadow(size, fyne.NewPos(0, 0))
 	minSize := r.MinSize()
 	if size.Height != minSize.Height || size.Width < minSize.Width {
 		r.b.Resize(fyne.NewSize(fyne.Max(size.Width, minSize.Width), minSize.Height))
@@ -142,26 +138,29 @@ func (r *menuBarRenderer) Layout(size fyne.Size) {
 	} else {
 		r.underlay.Resize(fyne.NewSize(0, 0))
 	}
-	r.cont.Resize(fyne.NewSize(size.Width-2*theme.Padding(), size.Height))
-	r.cont.Move(fyne.NewPos(theme.Padding(), 0))
+	innerPadding := theme.InnerPadding()
+	r.cont.Resize(fyne.NewSize(size.Width-2*innerPadding, size.Height))
+	r.cont.Move(fyne.NewPos(innerPadding, 0))
 	if item := r.b.activeItem; item != nil {
 		if item.Child().Size().IsZero() {
 			item.Child().Resize(item.Child().MinSize())
 		}
-		item.Child().Move(fyne.NewPos(item.Position().X+theme.Padding(), item.Size().Height))
+		item.Child().Move(fyne.NewPos(item.Position().X+innerPadding, item.Size().Height))
 	}
+
+	r.background.Move(fyne.NewPos(0, 0))
 	r.background.Resize(size)
 }
 
 func (r *menuBarRenderer) MinSize() fyne.Size {
-	return r.cont.MinSize().Add(fyne.NewSize(theme.Padding()*2, 0))
+	return r.cont.MinSize().Add(fyne.NewSize(theme.InnerPadding()*2, 0))
 }
 
 func (r *menuBarRenderer) Refresh() {
 	r.Layout(r.b.Size())
-	r.background.FillColor = theme.ButtonColor()
+	r.background.FillColor = theme.Color(theme.ColorNameBackground)
+	r.background.Shadow.Color = theme.Color(theme.ColorNameShadow)
 	r.background.Refresh()
-	r.ShadowingRenderer.RefreshShadow()
 	canvas.Refresh(r.b)
 }
 
@@ -172,9 +171,11 @@ type menuBarUnderlay struct {
 	action func()
 }
 
-var _ fyne.Widget = (*menuBarUnderlay)(nil)
-var _ fyne.Tappable = (*menuBarUnderlay)(nil)     // deactivate menu on click outside
-var _ desktop.Hoverable = (*menuBarUnderlay)(nil) // block hover events on main content
+var (
+	_ fyne.Widget       = (*menuBarUnderlay)(nil)
+	_ fyne.Tappable     = (*menuBarUnderlay)(nil) // deactivate menu on click outside
+	_ desktop.Hoverable = (*menuBarUnderlay)(nil) // block hover events on main content
+)
 
 func (u *menuBarUnderlay) CreateRenderer() fyne.WidgetRenderer {
 	return &menuUnderlayRenderer{}

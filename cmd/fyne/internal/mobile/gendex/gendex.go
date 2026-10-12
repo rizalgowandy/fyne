@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
+//go:build gendex
 
 // Gendex generates a dex file used by Go apps created with gomobile.
 //
@@ -23,7 +23,6 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,7 +38,7 @@ func main() {
 	flag.Parse()
 
 	var err error
-	tmpdir, err = ioutil.TempDir("", "gendex-")
+	tmpdir, err = os.MkdirTemp("", "gendex-")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,7 +55,7 @@ func gendex() error {
 	if androidHome == "" {
 		return errors.New("ANDROID_HOME not set")
 	}
-	if err := os.MkdirAll(tmpdir+"/work/org/golang/app", 0775); err != nil {
+	if err := os.MkdirAll(tmpdir+"/work/org/golang/app", 0o775); err != nil {
 		return err
 	}
 	javaFiles, err := filepath.Glob("../../../../internal/driver/mobile/app/*.java")
@@ -72,8 +71,8 @@ func gendex() error {
 	}
 	cmd := execabs.Command(
 		"javac",
-		"-source", "1.7",
-		"-target", "1.7",
+		"-source", "1.8",
+		"-target", "1.8",
 		"-bootclasspath", platform+"/android.jar",
 		"-d", tmpdir+"/work",
 	)
@@ -97,7 +96,7 @@ func gendex() error {
 		os.Stderr.Write(out)
 		return err
 	}
-	src, err := ioutil.ReadFile(tmpdir + "/classes.dex")
+	src, err := os.ReadFile(tmpdir + "/classes.dex")
 	if err != nil {
 		return err
 	}

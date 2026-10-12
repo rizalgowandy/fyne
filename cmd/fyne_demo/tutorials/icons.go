@@ -6,7 +6,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -63,8 +62,7 @@ func iconScreen(_ fyne.Window) fyne.CanvasObject {
 	background.SetMinSize(fyne.NewSize(280, 280))
 	b.icon = widget.NewIcon(b.icons[b.current].icon)
 
-	return fyne.NewContainerWithLayout(layout.NewBorderLayout(
-		bar, nil, nil, nil), bar, background, b.icon)
+	return container.NewBorder(bar, nil, nil, nil, background, b.icon)
 }
 
 func checkerPattern(x, y, _, _ int) color.Color {
@@ -72,10 +70,10 @@ func checkerPattern(x, y, _, _ int) color.Color {
 	y /= 20
 
 	if x%2 == y%2 {
-		return theme.BackgroundColor()
+		return theme.Color(theme.ColorNameBackground)
 	}
 
-	return theme.ShadowColor()
+	return theme.Color(theme.ColorNameShadow)
 }
 
 func iconList(icons []iconInfo) []string {
@@ -96,8 +94,10 @@ func loadIcons() []iconInfo {
 		{"SearchReplaceIcon", theme.SearchReplaceIcon()},
 
 		{"CheckButtonIcon", theme.CheckButtonIcon()},
+		{"CheckButtonFillIcon", theme.CheckButtonFillIcon()},
 		{"CheckButtonCheckedIcon", theme.CheckButtonCheckedIcon()},
 		{"RadioButtonIcon", theme.RadioButtonIcon()},
+		{"RadioButtonFillIcon", theme.RadioButtonFillIcon()},
 		{"RadioButtonCheckedIcon", theme.RadioButtonCheckedIcon()},
 
 		{"ColorAchromaticIcon", theme.ColorAchromaticIcon()},
@@ -117,6 +117,7 @@ func loadIcons() []iconInfo {
 		{"ErrorIcon", theme.ErrorIcon()},
 		{"QuestionIcon", theme.QuestionIcon()},
 		{"WarningIcon", theme.WarningIcon()},
+		{"BrokenImageIcon", theme.BrokenImageIcon()},
 
 		{"DocumentIcon", theme.DocumentIcon()},
 		{"DocumentCreateIcon", theme.DocumentCreateIcon()},
@@ -146,9 +147,9 @@ func loadIcons() []iconInfo {
 		{"ViewRefreshIcon", theme.ViewRefreshIcon()},
 		{"VisibilityIcon", theme.VisibilityIcon()},
 		{"VisibilityOffIcon", theme.VisibilityOffIcon()},
-		{"ZoomFitIcon", theme.ZoomFitIcon()},
-		{"ZoomInIcon", theme.ZoomInIcon()},
-		{"ZoomOutIcon", theme.ZoomOutIcon()},
+		{"ViewZoomFitIcon", theme.ZoomFitIcon()},
+		{"ViewZoomInIcon", theme.ZoomInIcon()},
+		{"ViewZoomOutIcon", theme.ZoomOutIcon()},
 
 		{"MoreHorizontalIcon", theme.MoreHorizontalIcon()},
 		{"MoreVerticalIcon", theme.MoreVerticalIcon()},
@@ -186,6 +187,7 @@ func loadIcons() []iconInfo {
 		{"VolumeUp", theme.VolumeUpIcon()},
 
 		{"AccountIcon", theme.AccountIcon()},
+		{"CalendarIcon", theme.CalendarIcon()},
 		{"LoginIcon", theme.LoginIcon()},
 		{"LogoutIcon", theme.LogoutIcon()},
 

@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin
-// +build ios
+//go:build darwin && ios
 
 package app
 
@@ -34,19 +33,18 @@ void showFileSavePicker(char* mimes, char *exts);
 void closeFileResource(void* urlPtr);
 */
 import "C"
+
 import (
 	"log"
 	"runtime"
 	"strings"
-	"sync"
-	"time"
+	"sync/atomic"
 	"unsafe"
 
 	"fyne.io/fyne/v2/internal/driver/mobile/event/lifecycle"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/paint"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/size"
 	"fyne.io/fyne/v2/internal/driver/mobile/event/touch"
-	"fyne.io/fyne/v2/internal/driver/mobile/geom"
 )
 
 var initThreadID uint64
@@ -76,12 +74,18 @@ func main(f func(App)) {
 	panic("unexpected return from app.runApp")
 }
 
-var pixelsPerPt float32
-var screenScale int // [UIScreen mainScreen].scale, either 1, 2, or 3.
+var (
+	pixelsPerPt float32
+	screenScale int // [UIScreen mainScreen].scale, either 1, 2, or 3.
+)
 
 var DisplayMetrics struct {
 	WidthPx  int
 	HeightPx int
+}
+
+func GoBack() {
+	// Apple do not permit apps to exit in any way other than user pressing home button / gesture
 }
 
 //export setDisplayMetrics
@@ -133,11 +137,11 @@ func updateConfig(width, height, orientation int32) {
 	}
 	insets := C.getDevicePadding()
 
-	theApp.eventsIn <- size.Event{
+	theApp.events.In() <- size.Event{
 		WidthPx:       int(width),
 		HeightPx:      int(height),
-		WidthPt:       geom.Pt(float32(width) / pixelsPerPt),
-		HeightPt:      geom.Pt(float32(height) / pixelsPerPt),
+		WidthPt:       float32(width) / pixelsPerPt,
+		HeightPt:      float32(height) / pixelsPerPt,
 		InsetTopPx:    int(float32(insets.top) * float32(screenScale)),
 		InsetBottomPx: int(float32(insets.bottom) * float32(screenScale)),
 		InsetLeftPx:   int(float32(insets.left) * float32(screenScale)),
@@ -146,7 +150,7 @@ func updateConfig(width, height, orientation int32) {
 		Orientation:   o,
 		DarkMode:      bool(C.isDark()),
 	}
-	theApp.eventsIn <- paint.Event{External: true}
+	theApp.events.In() <- paint.Event{External: true}
 }
 
 // touchIDs is the current active touches. The position in the array
@@ -154,32 +158,17 @@ func updateConfig(width, height, orientation int32) {
 //
 // It is widely reported that the iPhone can handle up to 5 simultaneous
 // touch events, while the iPad can handle 11.
-var (
-	// touchIDs may arrive concurrently, use a lock for safety.
-	// See https://github.com/fyne-io/fyne/issues/2407.
-	touchMu  sync.RWMutex
-	touchIDs [11]uintptr
-)
-
-var touchEvents struct {
-	sync.Mutex
-	pending []touch.Event
-}
+var touchIDs [11]uintptr
 
 //export sendTouch
 func sendTouch(cTouch, cTouchType uintptr, x, y float32) {
 	id := -1
-
-	touchMu.RLock()
 	for i, val := range touchIDs {
 		if val == cTouch {
 			id = i
 			break
 		}
 	}
-	touchMu.RUnlock()
-
-	touchMu.Lock()
 	if id == -1 {
 		for i, val := range touchIDs {
 			if val == 0 {
@@ -195,11 +184,16 @@ func sendTouch(cTouch, cTouchType uintptr, x, y float32) {
 
 	t := touch.Type(cTouchType)
 	if t == touch.TypeEnd {
-		touchIDs[id] = 0
+		// Clear all touchIDs when touch ends. The UITouch pointers are unique
+		// at every multi-touch event. See:
+		// https://github.com/fyne-io/fyne/issues/2407
+		// https://developer.apple.com/documentation/uikit/touches_presses_and_gestures?language=objc
+		for idx := range touchIDs {
+			touchIDs[idx] = 0
+		}
 	}
-	touchMu.Unlock()
 
-	theApp.eventsIn <- touch.Event{
+	theApp.events.In() <- touch.Event{
 		X:        x,
 		Y:        y,
 		Sequence: touch.Sequence(id),
@@ -219,19 +213,49 @@ func lifecycleVisible() { theApp.sendLifecycle(lifecycle.StageVisible) }
 //export lifecycleFocused
 func lifecycleFocused() { theApp.sendLifecycle(lifecycle.StageFocused) }
 
+//export lifecycleMemoryWarning
+func lifecycleMemoryWarning() {
+	cleanCaches()
+}
+
+// painting is true from BeginPaint until drawloop takes the publish that ends
+// the frame. The UI thread reads it, so it has to be atomic.
+var painting atomic.Bool
+
+// BeginPaint records that the driver is about to queue a frame's GL calls and
+// will follow them with a Publish.
+func BeginPaint() {
+	painting.Store(true)
+}
+
+// needsDraw reports whether the UI thread has pending changes to draw.
+//
+//export needsDraw
+func needsDraw() C.int {
+	if painting.Load() || theApp.worker.HasWork() {
+		return 1
+	}
+	return 0
+}
+
 //export drawloop
 func drawloop() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	for workAvailable := theApp.worker.WorkAvailable(); ; {
+	workAvailable := theApp.worker.WorkAvailable()
+	for {
+		theApp.worker.DoWork() // returns straight away when nothing is queued
+
+		if !painting.Load() {
+			return // no frame is coming, so hand the thread back to UIKit
+		}
+
 		select {
-		case <-workAvailable:
-			theApp.worker.DoWork()
+		case <-workAvailable: // loop round and run it
 		case <-theApp.publish:
+			painting.Store(false)
 			theApp.publishResult <- PublishResult{}
-			return
-		case <-time.After(100 * time.Millisecond): // incase the method blocked!!
 			return
 		}
 	}

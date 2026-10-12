@@ -3,10 +3,12 @@ package tutorials
 import (
 	"fmt"
 	"image/color"
+	"log"
 	"strconv"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/cmd/fyne_demo/data"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -19,15 +21,16 @@ func containerScreen(_ fyne.Window) fyne.CanvasObject {
 		widget.NewLabelWithStyle("Bottom", fyne.TextAlignCenter, fyne.TextStyle{}),
 		widget.NewLabel("Left"),
 		widget.NewLabel("Right"),
-		widget.NewLabel("Border Container"))
+		widget.NewLabel("Border Container"),
+	)
 	return container.NewCenter(content)
 }
 
 func makeAppTabsTab(_ fyne.Window) fyne.CanvasObject {
 	tabs := container.NewAppTabs(
-		container.NewTabItem("Tab 1", widget.NewLabel("Content of tab 1")),
-		container.NewTabItem("Tab 2 bigger", widget.NewLabel("Content of tab 2")),
-		container.NewTabItem("Tab 3", widget.NewLabel("Content of tab 3")),
+		container.NewTabItemWithIcon("Tab 1", theme.HomeIcon(), widget.NewLabel("Content of tab 1")),
+		container.NewTabItemWithIcon("Tab 2 bigger", theme.ComputerIcon(), widget.NewLabel("Content of tab 2")),
+		container.NewTabItemWithIcon("Tab 3", theme.MediaVideoIcon(), widget.NewLabel("Content of tab 3")),
 	)
 	for i := 4; i <= 12; i++ {
 		tabs.Append(container.NewTabItem(fmt.Sprintf("Tab %d", i), widget.NewLabel(fmt.Sprintf("Content of tab %d", i))))
@@ -107,6 +110,29 @@ func makeGridLayout(_ fyne.Window) fyne.CanvasObject {
 		box1, box2, box3, box4)
 }
 
+func makeInnerWindowTab(_ fyne.Window) fyne.CanvasObject {
+	label := widget.NewLabel("Window content for inner demo")
+	win1 := container.NewInnerWindow("Inner Demo", container.NewVBox(
+		label,
+		widget.NewButton("Tap Me", func() {
+			label.SetText("Tapped")
+		}),
+	))
+	win1.Icon = data.FyneLogo
+	win1.OnMaximized = func() {
+		log.Println("Should maximize here")
+	}
+	win1.OnMinimized = func() {
+		log.Println("Should minimize here")
+	}
+
+	win2 := container.NewInnerWindow("Inner2", widget.NewLabel("Win 2"))
+
+	multi := container.NewMultipleWindows()
+	multi.Windows = []*container.InnerWindow{win1, win2}
+	return multi
+}
+
 func makeScrollTab(_ fyne.Window) fyne.CanvasObject {
 	hlist := makeButtonList(20)
 	vlist := makeButtonList(50)
@@ -120,7 +146,7 @@ func makeScrollTab(_ fyne.Window) fyne.CanvasObject {
 }
 
 func makeScrollBothTab() fyne.CanvasObject {
-	logo := canvas.NewImageFromResource(theme.FyneLogo())
+	logo := canvas.NewImageFromResource(data.FyneLogo)
 	logo.SetMinSize(fyne.NewSize(800, 800))
 
 	scroll := container.NewScroll(logo)

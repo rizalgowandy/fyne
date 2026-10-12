@@ -4,34 +4,26 @@ import (
 	"runtime"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/lang"
 )
 
-type glDevice struct {
-}
+type glDevice struct{}
 
 // Declare conformity with Device
 var _ fyne.Device = (*glDevice)(nil)
 
-func (*glDevice) Orientation() fyne.DeviceOrientation {
-	return fyne.OrientationHorizontalLeft // TODO should we consider the monitor orientation or topmost window?
+func (*glDevice) Locale() fyne.Locale {
+	return lang.SystemLocale()
 }
 
-func (*glDevice) IsMobile() bool {
-	return false
+func (*glDevice) Orientation() fyne.DeviceOrientation {
+	return fyne.OrientationHorizontalLeft // TODO should we consider the monitor orientation or topmost window?
 }
 
 func (*glDevice) HasKeyboard() bool {
 	return true // TODO actually check - we could be in tablet mode
 }
 
-func (*glDevice) SystemScaleForWindow(w fyne.Window) float32 {
-	if runtime.GOOS == "darwin" {
-		return 1.0 // macOS scaling is done at the texture level
-	}
-	if runtime.GOOS == "windows" {
-		xScale, _ := w.(*window).viewport.GetContentScale()
-		return xScale
-	}
-
-	return scaleAuto
+func (*glDevice) IsBrowser() bool {
+	return runtime.GOARCH == "js" || runtime.GOOS == "js"
 }

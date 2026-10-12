@@ -23,10 +23,11 @@ type TableRef uint32
 // Resolve returns the Entry of TableRef in the given table.
 //
 // A TableRef is structured as follows:
-//  0xpptteeee
-//  pp: package index
-//  tt: type spec index in package
-//  eeee: entry index in type spec
+//
+//	0xpptteeee
+//	pp: package index
+//	tt: type spec index in package
+//	eeee: entry index in type spec
 //
 // The package and type spec values start at 1 for the first item,
 // to help catch cases where they have not been supplied.
@@ -73,10 +74,10 @@ func NewMipmapTable(pkgname string) (*Table, string) {
 
 	pkg.specs = append(pkg.specs,
 		&TypeSpec{
-			id: uint8(attr) + 1, //1,
+			id: uint8(attr) + 1, // 1,
 		},
 		&TypeSpec{
-			id:         uint8(mipmap) + 1, //2,
+			id:         uint8(mipmap) + 1, // 2,
 			entryCount: 1,
 			entries:    []uint32{uint32(icon)}, // {0}
 			types:      []*Type{typ},
@@ -128,8 +129,10 @@ func OpenTable() (*Table, error) {
 // indices.
 //
 // For example:
-//  tbl.SpecByName("@android:style/Theme.NoTitleBar")
-//  tbl.SpecByName("style")
+//
+//	tbl.SpecByName("@android:style/Theme.NoTitleBar")
+//	tbl.SpecByName("style")
+//
 // Both locate the spec by name "style".
 func (tbl *Table) SpecByName(name string) (int, *Package, int, *TypeSpec, error) {
 	n := strings.TrimPrefix(name, "@android:")
@@ -251,7 +254,7 @@ type Package struct {
 	specs []*TypeSpec
 }
 
-// UnmarshalBinary creates a pakage from binary data
+// UnmarshalBinary creates a package from binary data
 func (pkg *Package) UnmarshalBinary(bin []byte) error {
 	if err := (&pkg.chunkHeader).UnmarshalBinary(bin); err != nil {
 		return err

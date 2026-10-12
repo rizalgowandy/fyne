@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build !cgo !darwin,!linux,!openbsd,!freebsd
-// +build !windows
+//go:build (!cgo || (!darwin && !linux && !openbsd && !freebsd)) && !windows
 
 package gl
 
@@ -14,6 +13,10 @@ package gl
 type context struct{}
 
 func (*context) enqueue(c call) uintptr {
+	panic("unimplemented; GOOS/CGO combination not supported")
+}
+
+func (*context) HasWork() bool {
 	panic("unimplemented; GOOS/CGO combination not supported")
 }
 

@@ -2,10 +2,10 @@ package dialog
 
 import (
 	"strconv"
-	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal"
 	internalwidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -145,36 +145,31 @@ func newColorChannelEntry(c *colorChannel) *colorChannelEntry {
 
 func (e *colorChannelEntry) MinSize() fyne.Size {
 	// Ensure space for 3 digits
-	min := fyne.MeasureText("000", theme.TextSize(), fyne.TextStyle{})
-	min = min.Add(fyne.NewSize(theme.Padding()*6, theme.Padding()*4))
-	return min.Max(e.Entry.MinSize())
+	minSize := fyne.MeasureText("000", theme.TextSize(), fyne.TextStyle{})
+	minSize = minSize.Add(fyne.NewSize(theme.Padding()*6, theme.Padding()*4))
+	return internal.MaxSizes(minSize, e.Entry.MinSize())
 }
 
 type userChangeEntry struct {
 	widget.Entry
-
-	lock      sync.RWMutex
 	userTyped bool
 }
 
 func newUserChangeEntry(text string) *userChangeEntry {
 	e := &userChangeEntry{}
-	e.Entry.Text = text
+	e.Text = text
 	e.ExtendBaseWidget(e)
 	return e
 }
 
 func (e *userChangeEntry) setOnChanged(onChanged func(s string)) {
-	e.Entry.OnChanged = func(text string) {
-		e.lock.Lock()
-		userTyped := e.userTyped
-		if userTyped {
-			e.userTyped = false
-		}
-		e.lock.Unlock()
-		if !userTyped {
+	e.OnChanged = func(text string) {
+		if !e.userTyped {
 			return
 		}
+
+		e.userTyped = false
+
 		if onChanged != nil {
 			onChanged(text)
 		}
@@ -183,15 +178,11 @@ func (e *userChangeEntry) setOnChanged(onChanged func(s string)) {
 }
 
 func (e *userChangeEntry) TypedRune(r rune) {
-	e.lock.Lock()
 	e.userTyped = true
-	e.lock.Unlock()
 	e.Entry.TypedRune(r)
 }
 
 func (e *userChangeEntry) TypedKey(ev *fyne.KeyEvent) {
-	e.lock.Lock()
 	e.userTyped = true
-	e.lock.Unlock()
 	e.Entry.TypedKey(ev)
 }

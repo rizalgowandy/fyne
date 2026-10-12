@@ -1,373 +1,420 @@
-// +build !gles,!arm,!arm64,!android,!ios,!mobile darwin,!mobile,!ios
+//go:build (!gles && !arm && !arm64 && !android && !ios && !mobile && !test_web_driver && !wasm) || (darwin && !mobile && !ios && !wasm && !test_web_driver)
 
 package gl
 
 import (
-	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
 	"strings"
+	"unsafe"
 
-	"github.com/go-gl/gl/v3.2-core/gl"
+	"github.com/go-gl/gl/v2.1/gl"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/internal/cache"
-	"fyne.io/fyne/v2/theme"
 )
 
-// Buffer represents a GL buffer
-type Buffer uint32
+const (
+	arrayBuffer           = gl.ARRAY_BUFFER
+	bitColorBuffer        = gl.COLOR_BUFFER_BIT
+	bitDepthBuffer        = gl.DEPTH_BUFFER_BIT
+	clampToEdge           = gl.CLAMP_TO_EDGE
+	colorFormatRGBA       = gl.RGBA
+	compileStatus         = gl.COMPILE_STATUS
+	constantAlpha         = gl.CONSTANT_ALPHA
+	float                 = gl.FLOAT
+	fragmentShader        = gl.FRAGMENT_SHADER
+	front                 = gl.FRONT
+	back                  = gl.BACK
+	glFalse               = gl.FALSE
+	linkStatus            = gl.LINK_STATUS
+	maxTextureSizeParam   = gl.MAX_TEXTURE_SIZE
+	one                   = gl.ONE
+	zero                  = gl.ZERO
+	oneMinusConstantAlpha = gl.ONE_MINUS_CONSTANT_ALPHA
+	oneMinusSrcAlpha      = gl.ONE_MINUS_SRC_ALPHA
+	scissorTest           = gl.SCISSOR_TEST
+	srcAlpha              = gl.SRC_ALPHA
+	staticDraw            = gl.STATIC_DRAW
+	texture0              = gl.TEXTURE0
+	texture1              = gl.TEXTURE1
+	texture2D             = gl.TEXTURE_2D
+	textureNearest        = gl.NEAREST
+	textureMinFilter      = gl.TEXTURE_MIN_FILTER
+	textureMagFilter      = gl.TEXTURE_MAG_FILTER
+	textureWrapS          = gl.TEXTURE_WRAP_S
+	textureWrapT          = gl.TEXTURE_WRAP_T
+	triangles             = gl.TRIANGLES
+	triangleStrip         = gl.TRIANGLE_STRIP
+	unsignedByte          = gl.UNSIGNED_BYTE
+	vertexShader          = gl.VERTEX_SHADER
+)
 
-// Program represents a compiled GL program
-type Program uint32
+const (
+	noBuffer  = Buffer(0)
+	noProgram = Program(0)
+	noShader  = Shader(0)
+)
 
-// Texture represents an uploaded GL texture
-type Texture uint32
+type (
+	// Attribute represents a GL attribute
+	Attribute uint32
+	// Buffer represents a GL buffer
+	Buffer uint32
+	// Program represents a compiled GL program
+	Program uint32
+	// Shader represents a GL shader
+	Shader uint32
+	// Uniform represents a GL uniform
+	Uniform int32
+)
 
-// NoTexture is the zero value for a Texture
-var NoTexture = Texture(0)
+var textureFilterToGL = [...]int32{gl.LINEAR, gl.NEAREST, gl.LINEAR}
 
-var textureFilterToGL = []int32{gl.LINEAR, gl.NEAREST, gl.LINEAR}
-
-func newTexture(textureFilter canvas.ImageScale) Texture {
-	var texture uint32
-
-	if int(textureFilter) >= len(textureFilterToGL) {
-		fyne.LogError(fmt.Sprintf("Invalid canvas.ImageScale value (%d), using canvas.ImageScaleSmooth as default value", textureFilter), nil)
-		textureFilter = canvas.ImageScaleSmooth
-	}
-
-	gl.GenTextures(1, &texture)
-	logError()
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, texture)
-	logError()
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, textureFilterToGL[textureFilter])
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, textureFilterToGL[textureFilter])
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	logError()
-
-	return Texture(texture)
-}
-
-func (p *glPainter) imgToTexture(img image.Image, textureFilter canvas.ImageScale) Texture {
-	switch i := img.(type) {
-	case *image.Uniform:
-		texture := newTexture(textureFilter)
-		r, g, b, a := i.RGBA()
-		r8, g8, b8, a8 := uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
-		data := []uint8{r8, g8, b8, a8}
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-			gl.UNSIGNED_BYTE, gl.Ptr(data))
-		logError()
-		return texture
-	case *image.RGBA:
-		if len(i.Pix) == 0 { // image is empty
-			return 0
-		}
-
-		texture := newTexture(textureFilter)
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(i.Rect.Size().X), int32(i.Rect.Size().Y),
-			0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(i.Pix))
-		logError()
-		return texture
-	default:
-		rgba := image.NewRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
-		draw.Draw(rgba, rgba.Rect, img, image.Point{}, draw.Over)
-		return p.imgToTexture(rgba, textureFilter)
-	}
-}
-
-func (p *glPainter) SetOutputSize(width, height int) {
-	gl.Viewport(0, 0, int32(width), int32(height))
-	logError()
-}
-
-func (p *glPainter) freeTexture(obj fyne.CanvasObject) {
-	texture, ok := cache.GetTexture(obj)
-	if !ok {
-		return
-	}
-
-	tex := texture
-	gl.DeleteTextures(1, &tex)
-	logError()
-	cache.DeleteTexture(obj)
-}
-
-func glInit() {
+func (p *painter) Init() {
+	p.ctx = &coreContext{}
 	err := gl.Init()
 	if err != nil {
 		fyne.LogError("failed to initialise OpenGL", err)
 		return
 	}
+	p.maxTextureSize = p.ctx.GetInteger(maxTextureSizeParam)
 
 	gl.Disable(gl.DEPTH_TEST)
 	gl.Enable(gl.BLEND)
-	logError()
+	p.logError()
+	p.program = programState{
+		ref:        p.createProgram("simple"),
+		buff:       p.createBuffer(20),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.blurProgram = programState{
+		ref:        p.createProgram("blur"),
+		buff:       p.createBuffer(20),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.lineProgram = programState{
+		ref:        p.createProgram("line"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.rectangleProgram = programState{
+		ref:        p.createProgram("rectangle"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.roundRectangleProgram = programState{
+		ref:        p.createProgram("round_rectangle"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.polygonProgram = programState{
+		ref:        p.createProgram("polygon"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.arcProgram = programState{
+		ref:        p.createProgram("arc"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.bezierCurveProgram = programState{
+		ref:        p.createProgram("bezier_curve"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.arbitraryPolygonProgram = programState{
+		ref:        p.createProgram("arbitrary_polygon"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
+
+	p.ellipseProgram = programState{
+		ref:        p.createProgram("ellipse"),
+		buff:       p.createBuffer(16),
+		uniforms:   make(map[string]*uniformState),
+		attributes: make(map[string]Attribute),
+	}
 }
 
-func compileShader(source string, shaderType uint32) (uint32, error) {
-	shader := gl.CreateShader(shaderType)
+type coreContext struct{}
 
-	csources, free := gl.Strs(source)
-	gl.ShaderSource(shader, 1, csources, nil)
-	logError()
-	free()
-	gl.CompileShader(shader)
-	logError()
+var _ context = (*coreContext)(nil)
 
-	var status int32
-	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
-	if status == gl.FALSE {
-		var logLength int32
-		gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, &logLength)
-
-		info := strings.Repeat("\x00", int(logLength+1))
-		gl.GetShaderInfoLog(shader, logLength, nil, gl.Str(info))
-
-		return 0, fmt.Errorf("failed to compile %v: %v", source, info)
-	}
-
-	return shader, nil
+func (c *coreContext) ActiveTexture(textureUnit uint32) {
+	gl.ActiveTexture(textureUnit)
 }
 
-const (
-	vertexShaderSource = `
-    #version 110
-    attribute vec3 vert;
-    attribute vec2 vertTexCoord;
-    varying vec2 fragTexCoord;
-
-    void main() {
-        fragTexCoord = vertTexCoord;
-
-        gl_Position = vec4(vert, 1);
-    }
-` + "\x00"
-
-	fragmentShaderSource = `
-    #version 110
-    uniform sampler2D tex;
-
-    varying vec2 fragTexCoord;
-
-    void main() {
-        gl_FragColor = texture2D(tex, fragTexCoord);
-    }
-` + "\x00"
-
-	vertexLineShaderSource = `
-    #version 110
-    attribute vec2 vert;
-    attribute vec2 normal;
-    
-    uniform float lineWidth;
-
-    varying vec2 delta;
-
-    void main() {
-        delta = normal * lineWidth;
-
-        gl_Position = vec4(vert + delta, 0, 1);
-    }
-` + "\x00"
-
-	fragmentLineShaderSource = `
-    #version 110
-    uniform vec4 color;
-    uniform float lineWidth;
-    uniform float feather;
-
-    varying vec2 delta;
-
-    void main() {
-        float alpha = color.a;
-        float distance = length(delta);
-
-        if (feather == 0.0 || distance <= lineWidth - feather) {
-           gl_FragColor = color;
-        } else {
-           gl_FragColor = vec4(color.r, color.g, color.b, mix(color.a, 0.0, (distance - (lineWidth - feather)) / feather));
-        }
-    }
-` + "\x00"
-)
-
-func (p *glPainter) Init() {
-	vertexShader, err := compileShader(vertexShaderSource, gl.VERTEX_SHADER)
-	if err != nil {
-		panic(err)
-	}
-	fragmentShader, err := compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER)
-	if err != nil {
-		panic(err)
-	}
-
-	prog := gl.CreateProgram()
-	gl.AttachShader(prog, vertexShader)
-	gl.AttachShader(prog, fragmentShader)
-	gl.LinkProgram(prog)
-	logError()
-
-	p.program = Program(prog)
-
-	vertexLineShader, err := compileShader(vertexLineShaderSource, gl.VERTEX_SHADER)
-	if err != nil {
-		panic(err)
-	}
-	fragmentLineShader, err := compileShader(fragmentLineShaderSource, gl.FRAGMENT_SHADER)
-	if err != nil {
-		panic(err)
-	}
-
-	lineProg := gl.CreateProgram()
-	gl.AttachShader(lineProg, vertexLineShader)
-	gl.AttachShader(lineProg, fragmentLineShader)
-	gl.LinkProgram(lineProg)
-	logError()
-
-	p.lineProgram = Program(lineProg)
+func (c *coreContext) AttachShader(program Program, shader Shader) {
+	gl.AttachShader(uint32(program), uint32(shader))
 }
 
-func (p *glPainter) glClearBuffer() {
-	gl.UseProgram(uint32(p.program))
-	logError()
-
-	r, g, b, a := theme.BackgroundColor().RGBA()
-	max16bit := float32(255 * 255)
-	gl.ClearColor(float32(r)/max16bit, float32(g)/max16bit, float32(b)/max16bit, float32(a)/max16bit)
-	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-	logError()
+func (c *coreContext) BindBuffer(target uint32, buf Buffer) {
+	gl.BindBuffer(target, uint32(buf))
 }
 
-func (p *glPainter) glScissorOpen(x, y, w, h int32) {
+func (c *coreContext) BindTexture(target uint32, texture Texture) {
+	gl.BindTexture(target, uint32(texture))
+}
+
+func (c *coreContext) BlendColor(r, g, b, a float32) {
+	gl.BlendColor(r, g, b, a)
+}
+
+func (c *coreContext) BlendFunc(srcFactor, destFactor uint32) {
+	gl.BlendFunc(srcFactor, destFactor)
+}
+
+func (c *coreContext) BufferData(target uint32, points []float32, usage uint32) {
+	gl.BufferData(target, 4*len(points), gl.Ptr(points), usage)
+}
+
+func (c *coreContext) BufferSubData(target uint32, points []float32) {
+	gl.BufferSubData(target, 0, 4*len(points), gl.Ptr(points))
+}
+
+func (c *coreContext) Clear(mask uint32) {
+	gl.Clear(mask)
+}
+
+func (c *coreContext) ClearColor(r, g, b, a float32) {
+	gl.ClearColor(r, g, b, a)
+}
+
+func (c *coreContext) CompileShader(shader Shader) {
+	gl.CompileShader(uint32(shader))
+}
+
+func (c *coreContext) CreateBuffer() Buffer {
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+	return Buffer(vbo)
+}
+
+func (c *coreContext) CreateProgram() Program {
+	return Program(gl.CreateProgram())
+}
+
+func (c *coreContext) CreateShader(typ uint32) Shader {
+	return Shader(gl.CreateShader(typ))
+}
+
+func (c *coreContext) CreateTexture() (texture Texture) {
+	var tex uint32
+	gl.GenTextures(1, &tex)
+	return Texture(tex)
+}
+
+func (c *coreContext) DeleteBuffer(buffer Buffer) {
+	gl.DeleteBuffers(1, (*uint32)(&buffer))
+}
+
+func (c *coreContext) DeleteProgram(program Program) {
+	gl.DeleteProgram(uint32(program))
+}
+
+func (c *coreContext) DeleteTexture(texture Texture) {
+	tex := uint32(texture)
+	gl.DeleteTextures(1, &tex)
+}
+
+func (c *coreContext) Disable(capability uint32) {
+	gl.Disable(capability)
+}
+
+func (c *coreContext) DrawArrays(mode uint32, first, count int) {
+	gl.DrawArrays(
+		mode,
+		int32(first), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(count), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+	)
+}
+
+func (c *coreContext) Enable(capability uint32) {
+	gl.Enable(capability)
+}
+
+func (c *coreContext) EnableVertexAttribArray(attribute Attribute) {
+	gl.EnableVertexAttribArray(uint32(attribute))
+}
+
+func (c *coreContext) GetAttribLocation(program Program, name string) Attribute {
+	return Attribute(gl.GetAttribLocation(uint32(program), gl.Str(name+"\x00"))) //gosec:disable G115 -- the attribute location is a pointer, so unsigned is fine
+}
+
+func (c *coreContext) GetError() uint32 {
+	return gl.GetError()
+}
+
+func (c *coreContext) GetInteger(pname uint32) int {
+	var value int32
+	gl.GetIntegerv(pname, &value)
+	return int(value)
+}
+
+func (c *coreContext) GetProgrami(program Program, param uint32) int {
+	var value int32
+	gl.GetProgramiv(uint32(program), param, &value)
+	return int(value)
+}
+
+func (c *coreContext) GetProgramInfoLog(program Program) string {
+	var logLength int32
+	gl.GetProgramiv(uint32(program), gl.INFO_LOG_LENGTH, &logLength)
+	info := strings.Repeat("\x00", int(logLength+1))
+	gl.GetProgramInfoLog(uint32(program), logLength, nil, gl.Str(info))
+	return info
+}
+
+func (c *coreContext) GetShaderi(shader Shader, param uint32) int {
+	var value int32
+	gl.GetShaderiv(uint32(shader), param, &value)
+	return int(value)
+}
+
+func (c *coreContext) GetShaderInfoLog(shader Shader) string {
+	var logLength int32
+	gl.GetShaderiv(uint32(shader), gl.INFO_LOG_LENGTH, &logLength)
+	info := strings.Repeat("\x00", int(logLength+1))
+	gl.GetShaderInfoLog(uint32(shader), logLength, nil, gl.Str(info))
+	return info
+}
+
+func (c *coreContext) GetUniformLocation(program Program, name string) Uniform {
+	return Uniform(gl.GetUniformLocation(uint32(program), gl.Str(name+"\x00")))
+}
+
+func (c *coreContext) LinkProgram(program Program) {
+	gl.LinkProgram(uint32(program))
+}
+
+func (c *coreContext) CopyTexSubImage2D(target uint32, level, xoffset, yoffset, x, y, width, height int) {
+	gl.CopyTexSubImage2D(
+		target,
+		int32(level),   //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(xoffset), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(yoffset), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(x),       //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(y),       //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(width),   //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(height),  //gosec:disable G115 -- we are definitely fine with limiting the value range here
+	)
+}
+
+func (c *coreContext) ReadBuffer(src uint32) {
+	gl.ReadBuffer(src)
+}
+
+func (c *coreContext) ReadPixels(x, y, width, height int, colorFormat, typ uint32, pixels []uint8) {
+	gl.ReadPixels(
+		int32(x),      //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(y),      //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(width),  //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(height), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		colorFormat,
+		typ,
+		gl.Ptr(pixels),
+	)
+}
+
+func (c *coreContext) Scissor(x, y, w, h int32) {
 	gl.Scissor(x, y, w, h)
-	gl.Enable(gl.SCISSOR_TEST)
-	logError()
 }
 
-func (p *glPainter) glScissorClose() {
-	gl.Disable(gl.SCISSOR_TEST)
-	logError()
+func (c *coreContext) ShaderSource(shader Shader, source string) {
+	csources, free := gl.Strs(source + "\x00")
+	defer free()
+	gl.ShaderSource(uint32(shader), 1, csources, nil)
 }
 
-func (p *glPainter) glCreateBuffer(points []float32) Buffer {
-	gl.UseProgram(uint32(p.program))
-
-	var vbo uint32
-	gl.GenBuffers(1, &vbo)
-	logError()
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	logError()
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(points), gl.Ptr(points), gl.STATIC_DRAW)
-	logError()
-
-	vertAttrib := uint32(gl.GetAttribLocation(uint32(p.program), gl.Str("vert\x00")))
-	gl.EnableVertexAttribArray(vertAttrib)
-	gl.VertexAttribPointerWithOffset(vertAttrib, 3, gl.FLOAT, false, 5*4, 0)
-	logError()
-
-	texCoordAttrib := uint32(gl.GetAttribLocation(uint32(p.program), gl.Str("vertTexCoord\x00")))
-	gl.EnableVertexAttribArray(texCoordAttrib)
-	gl.VertexAttribPointerWithOffset(texCoordAttrib, 2, gl.FLOAT, false, 5*4, 12)
-	logError()
-
-	return Buffer(vbo)
-}
-
-func (p *glPainter) glCreateLineBuffer(points []float32) Buffer {
-	gl.UseProgram(uint32(p.lineProgram))
-
-	var vbo uint32
-	gl.GenBuffers(1, &vbo)
-	logError()
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	logError()
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(points), gl.Ptr(points), gl.STATIC_DRAW)
-	logError()
-
-	vertAttrib := uint32(gl.GetAttribLocation(uint32(p.lineProgram), gl.Str("vert\x00")))
-	gl.EnableVertexAttribArray(vertAttrib)
-	gl.VertexAttribPointerWithOffset(vertAttrib, 2, gl.FLOAT, false, 4*4, 0)
-	logError()
-
-	normalAttrib := uint32(gl.GetAttribLocation(uint32(p.lineProgram), gl.Str("normal\x00")))
-	gl.EnableVertexAttribArray(normalAttrib)
-	gl.VertexAttribPointerWithOffset(normalAttrib, 2, gl.FLOAT, false, 4*4, 2*4)
-	logError()
-
-	return Buffer(vbo)
-}
-
-func (p *glPainter) glFreeBuffer(vbo Buffer) {
-	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
-	logError()
-	buf := uint32(vbo)
-	gl.DeleteBuffers(1, &buf)
-	logError()
-}
-
-func (p *glPainter) glDrawTexture(texture Texture, alpha float32) {
-	gl.UseProgram(uint32(p.program))
-
-	// here we have to choose between blending the image alpha or fading it...
-	// TODO find a way to support both
-	if alpha != 1.0 {
-		gl.BlendColor(0, 0, 0, alpha)
-		gl.BlendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA)
-	} else {
-		gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+func (c *coreContext) TexImage2D(target uint32, level, width, height int, colorFormat, typ uint32, data []uint8) {
+	var ptr unsafe.Pointer
+	if len(data) > 0 {
+		ptr = gl.Ptr(data)
 	}
-	logError()
-
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, uint32(texture))
-	logError()
-
-	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
-	logError()
+	gl.TexImage2D(
+		target,
+		int32(level),       //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(colorFormat), //gosec:disable G115 -- colorFormat is an enum behind the scenes while the internal format is an int
+		int32(width),       //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(height),      //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		0,
+		colorFormat,
+		typ,
+		ptr,
+	)
 }
 
-func (p *glPainter) glDrawLine(width float32, col color.Color, feather float32) {
-	gl.UseProgram(uint32(p.lineProgram))
-
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-	logError()
-
-	colorUniform := gl.GetUniformLocation(uint32(p.lineProgram), gl.Str("color\x00"))
-	r, g, b, a := col.RGBA()
-	if a == 0 {
-		gl.Uniform4f(colorUniform, 0, 0, 0, 0)
-	} else {
-		alpha := float32(a)
-		col := []float32{float32(r) / alpha, float32(g) / alpha, float32(b) / alpha, alpha / 0xffff}
-		gl.Uniform4fv(colorUniform, 1, &col[0])
-	}
-	lineWidthUniform := gl.GetUniformLocation(uint32(p.lineProgram), gl.Str("lineWidth\x00"))
-	gl.Uniform1f(lineWidthUniform, width)
-
-	featherUniform := gl.GetUniformLocation(uint32(p.lineProgram), gl.Str("feather\x00"))
-	gl.Uniform1f(featherUniform, feather)
-	logError()
-
-	gl.DrawArrays(gl.TRIANGLES, 0, 6)
-	logError()
+func (c *coreContext) TexParameteri(target, param uint32, value int32) {
+	gl.TexParameteri(target, param, value)
 }
 
-func (p *glPainter) glCapture(width, height int32, pixels *[]uint8) {
-	gl.ReadBuffer(gl.FRONT)
-	logError()
-	gl.ReadPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(*pixels))
-	logError()
+func (c *coreContext) Uniform1f(uniform Uniform, v float32) {
+	gl.Uniform1f(int32(uniform), v)
 }
 
-func logError() {
-	if fyne.CurrentApp().Settings().BuildType() != fyne.BuildDebug {
-		return
-	}
-	logGLError(gl.GetError())
+func (c *coreContext) Uniform1fv(uniform Uniform, v []float32) {
+	gl.Uniform1fv(
+		int32(uniform),
+		int32(len(v)), //gosec:disable G115 -- v should definitely not contain more than two billion values
+		&v[0],
+	)
+}
+
+func (c *coreContext) Uniform1i(uniform Uniform, v int32) {
+	gl.Uniform1i(int32(uniform), v)
+}
+
+func (c *coreContext) Uniform2f(uniform Uniform, v0, v1 float32) {
+	gl.Uniform2f(int32(uniform), v0, v1)
+}
+
+func (c *coreContext) Uniform2fv(uniform Uniform, v []float32) {
+	gl.Uniform2fv(
+		int32(uniform),
+		int32(len(v)/2), //gosec:disable G115 -- v should definitely not contain more than two billion values
+		&v[0],
+	)
+}
+
+func (c *coreContext) Uniform4f(uniform Uniform, v0, v1, v2, v3 float32) {
+	gl.Uniform4f(int32(uniform), v0, v1, v2, v3)
+}
+
+func (c *coreContext) UseProgram(program Program) {
+	gl.UseProgram(uint32(program))
+}
+
+func (c *coreContext) VertexAttribPointerWithOffset(attribute Attribute, size int, typ uint32, normalized bool, stride, offset int) {
+	gl.VertexAttribPointerWithOffset(
+		uint32(attribute),
+		int32(size), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		typ,
+		normalized,
+		int32(stride), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		uintptr(offset),
+	)
+}
+
+func (c *coreContext) Viewport(x, y, width, height int) {
+	gl.Viewport(
+		int32(x),      //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(y),      //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(width),  //gosec:disable G115 -- we are definitely fine with limiting the value range here
+		int32(height), //gosec:disable G115 -- we are definitely fine with limiting the value range here
+	)
 }
