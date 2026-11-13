@@ -7,9 +7,10 @@ import (
 	"fyne.io/fyne/v2/test"
 )
 
-func TestApplySettings_BeforeContentSet(t *testing.T) {
+func TestApplySettings_BeforeContentSet(*testing.T) {
 	a := test.NewApp()
-	_ = a.NewWindow("NoContent")
+	w := a.NewWindow("NoContent")
+	defer w.Close()
 
 	app.ApplySettings(a.Settings(), a)
 }

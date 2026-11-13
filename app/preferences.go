@@ -2,8 +2,9 @@ package app
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"errors"
+	"io"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -12,76 +13,115 @@ import (
 
 type preferences struct {
 	*internal.InMemoryPreferences
-	ignoreChange bool
 
-	app *fyneApp
+	prefLock            sync.RWMutex
+	savedRecently       bool
+	changedDuringSaving bool
+
+	app                 *fyneApp
+	needsSaveBeforeExit bool
 }
 
 // Declare conformity with Preferences interface
 var _ fyne.Preferences = (*preferences)(nil)
 
-func (p *preferences) resetIgnore() {
+// sentinel error to signal an empty preferences storage backend was loaded
+var errEmptyPreferencesStore = errors.New("empty preferences store")
+
+// returned from storageWriter() - may be a file, browser local storage, etc
+type writeSyncCloser interface {
+	io.WriteCloser
+	Sync() error
+}
+
+// forceImmediateSave writes preferences to storage immediately, ignoring the debouncing
+// logic in the change listener. Does nothing if preferences are not backed with a persistent store.
+func (p *preferences) forceImmediateSave() {
+	if !p.needsSaveBeforeExit {
+		return
+	}
+	err := p.save()
+	if err != nil {
+		fyne.LogError("Failed on force saving preferences", err)
+	}
+}
+
+func (p *preferences) resetSavedRecently() {
 	go func() {
 		time.Sleep(time.Millisecond * 100) // writes are not always atomic. 10ms worked, 100 is safer.
-		p.ignoreChange = false
+
+		// For test reasons we need to use current app not what we were initialised with as they can differ
+		fyne.DoAndWait(func() {
+			p.prefLock.Lock()
+			p.savedRecently = false
+			changedDuringSaving := p.changedDuringSaving
+			p.changedDuringSaving = false
+			p.prefLock.Unlock()
+
+			if changedDuringSaving {
+				if err := p.save(); err != nil {
+					fyne.LogError("failed on saving preferences", err)
+				}
+			}
+		})
 	}()
 }
 
 func (p *preferences) save() error {
-	return p.saveToFile(p.storagePath())
-}
+	p.prefLock.Lock()
+	p.savedRecently = true
+	p.prefLock.Unlock()
+	defer p.resetSavedRecently()
 
-func (p *preferences) saveToFile(path string) error {
-	p.ignoreChange = true
-	defer p.resetIgnore()
-	err := os.MkdirAll(filepath.Dir(path), 0700)
-	if err != nil { // this is not an exists error according to docs
+	storage, err := p.storageWriter()
+	if err != nil {
 		return err
 	}
+	return p.saveToStorage(storage)
+}
 
-	file, err := os.Create(path)
-	if err != nil {
-		if !os.IsExist(err) {
-			return err
-		}
-		file, err = os.Open(path) // #nosec
-		if err != nil {
-			return err
-		}
-	}
-	encode := json.NewEncoder(file)
+func (p *preferences) saveToStorage(writer writeSyncCloser) error {
+	defer writer.Close()
+	encode := json.NewEncoder(writer)
 
-	p.InMemoryPreferences.ReadValues(func(values map[string]interface{}) {
+	var err error
+	p.ReadValues(func(values map[string]any) {
 		err = encode.Encode(&values)
 	})
+
+	err2 := writer.Sync()
+	if err == nil {
+		err = err2
+	}
 	return err
 }
 
 func (p *preferences) load() {
-	err := p.loadFromFile(p.storagePath())
-	if err != nil {
+	storage, err := p.storageReader()
+	if err == nil {
+		err = p.loadFromStorage(storage)
+	}
+	if err != nil && err != errEmptyPreferencesStore {
 		fyne.LogError("Preferences load error:", err)
 	}
 }
 
-func (p *preferences) loadFromFile(path string) error {
-	file, err := os.Open(path) // #nosec
-	if err != nil {
-		if os.IsNotExist(err) {
-			err := os.MkdirAll(filepath.Dir(path), 0700)
-			if err != nil {
-				return err
-			}
-			return nil
+func (p *preferences) loadFromStorage(storage io.ReadCloser) (err error) {
+	defer func() {
+		if r := storage.Close(); r != nil && err == nil {
+			err = r
 		}
-		return err
-	}
-	defer file.Close()
-	decode := json.NewDecoder(file)
+	}()
+	decode := json.NewDecoder(storage)
 
-	p.InMemoryPreferences.WriteValues(func(values map[string]interface{}) {
+	p.WriteValues(func(values map[string]any) {
 		err = decode.Decode(&values)
+		if err != nil {
+			return
+		}
+		convertLists(values)
 	})
+
 	return err
 }
 
@@ -91,12 +131,23 @@ func newPreferences(app *fyneApp) *preferences {
 	p.InMemoryPreferences = internal.NewInMemoryPreferences()
 
 	// don't load or watch if not setup
-	if app.uniqueID == "" {
+	if app.uniqueID == "" && app.Metadata().ID == "" {
 		return p
 	}
 
+	p.needsSaveBeforeExit = true
 	p.AddChangeListener(func() {
-		if p.ignoreChange { // callback after loading, no need to save
+		if p != app.prefs {
+			return
+		}
+		p.prefLock.Lock()
+		shouldIgnoreChange := p.savedRecently
+		if p.savedRecently {
+			p.changedDuringSaving = true
+		}
+		p.prefLock.Unlock()
+
+		if shouldIgnoreChange { // callback after loading from storage, or too many updates in a row
 			return
 		}
 
@@ -107,4 +158,36 @@ func newPreferences(app *fyneApp) *preferences {
 	})
 	p.watch()
 	return p
+}
+
+func convertLists(values map[string]any) {
+	for k, v := range values {
+		if items, ok := v.([]any); ok {
+			if len(items) == 0 {
+				continue
+			}
+
+			switch items[0].(type) {
+			case bool:
+				bools := make([]bool, len(items))
+				for i, item := range items {
+					bools[i], _ = item.(bool)
+				}
+				values[k] = bools
+			case float64:
+				floats := make([]float64, len(items))
+				for i, item := range items {
+					floats[i], _ = item.(float64)
+				}
+				values[k] = floats
+			// case int: // json has no int!
+			case string:
+				strings := make([]string, len(items))
+				for i, item := range items {
+					strings[i], _ = item.(string)
+				}
+				values[k] = strings
+			}
+		}
+	}
 }

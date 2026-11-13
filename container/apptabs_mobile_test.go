@@ -1,4 +1,4 @@
-// +build mobile
+//go:build mobile
 
 package container_test
 
@@ -11,55 +11,13 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestTabContainer_ApplyTheme(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-
-	w := test.NewWindow(
-		container.NewAppTabs(&container.TabItem{Text: "Test", Content: widget.NewLabel("Text")}),
-	)
-	defer w.Close()
-	w.SetPadded(false)
-	w.Resize(fyne.NewSize(150, 150))
-	c := w.Canvas()
-
-	test.AssertImageMatches(t, "apptabs/mobile/theme_default.png", c.Capture())
-
-	test.ApplyTheme(t, test.NewTheme())
-	test.AssertImageMatches(t, "apptabs/mobile/theme_ugly.png", c.Capture())
-}
-
-func TestTabContainer_ChangeItemContent(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-
-	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
-	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
-	tabs := container.NewAppTabs(item1, item2)
-	w := test.NewWindow(tabs)
-	defer w.Close()
-	w.SetPadded(false)
-	w.Resize(fyne.NewSize(150, 150))
-	c := w.Canvas()
-
-	test.AssertRendersToMarkup(t, "apptabs/mobile/change_content_initial.xml", c)
-
-	item1.Content = widget.NewLabel("Text3")
-	tabs.Refresh()
-	test.AssertRendersToMarkup(t, "apptabs/mobile/change_content_change_visible.xml", c)
-
-	item2.Content = widget.NewLabel("Text4")
-	tabs.Refresh()
-	test.AssertRendersToMarkup(t, "apptabs/mobile/change_content_change_hidden.xml", c)
-}
-
-func TestTabContainer_ChangeItemIcon(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_ChangeItemIcon(t *testing.T) {
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Icon: theme.CancelIcon(), Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Icon: theme.ConfirmIcon(), Content: widget.NewLabel("Text2")}
@@ -81,9 +39,8 @@ func TestTabContainer_ChangeItemIcon(t *testing.T) {
 	test.AssertRendersToMarkup(t, "apptabs/mobile/change_icon_change_unselected.xml", c)
 }
 
-func TestTabContainer_ChangeItemText(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_ChangeItemText(t *testing.T) {
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
@@ -105,9 +62,8 @@ func TestTabContainer_ChangeItemText(t *testing.T) {
 	test.AssertRendersToMarkup(t, "apptabs/mobile/change_label_change_unselected.xml", c)
 }
 
-func TestTabContainer_DynamicTabs(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_DynamicTabs(t *testing.T) {
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	tabs := container.NewAppTabs(item1)
@@ -157,10 +113,9 @@ func TestTabContainer_DynamicTabs(t *testing.T) {
 	test.AssertRendersToMarkup(t, "apptabs/mobile/dynamic_replaced_completely.xml", c)
 }
 
-func TestTabContainer_HoverButtons(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
-	test.ApplyTheme(t, theme.LightTheme())
+func TestAppTabs_HoverButtons(t *testing.T) {
+	test.NewTempApp(t)
+	test.ApplyTheme(t, test.Theme())
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text2")}
@@ -183,9 +138,8 @@ func TestTabContainer_HoverButtons(t *testing.T) {
 	test.AssertRendersToMarkup(t, "apptabs/mobile/hover_none.xml", c, "no hovering on mobile")
 }
 
-func TestTabContainer_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_Layout(t *testing.T) {
+	test.NewTempApp(t)
 
 	w := test.NewWindow(nil)
 	defer w.Close()
@@ -232,25 +186,25 @@ func TestTabContainer_Layout(t *testing.T) {
 			name:     "bottom: tab with icon only",
 			item:     container.NewTabItemWithIcon("", theme.InfoIcon(), canvas.NewCircle(theme.BackgroundColor())),
 			location: container.TabLocationBottom,
-			want:     "apptabs/mobile/layout_bottom_ico.xml",
+			want:     "apptabs/mobile/layout_bottom_icon.xml",
 		},
 		{
 			name:     "leading: tab with icon and text",
 			item:     container.NewTabItemWithIcon("Text1", theme.CancelIcon(), canvas.NewCircle(theme.BackgroundColor())),
 			location: container.TabLocationLeading,
-			want:     "apptabs/mobile/layout_bottom_icon_and_text.xml",
+			want:     "apptabs/mobile/layout_top_icon_and_text.xml",
 		},
 		{
 			name:     "leading: tab with text only",
 			item:     container.NewTabItem("Text2", canvas.NewCircle(theme.BackgroundColor())),
 			location: container.TabLocationLeading,
-			want:     "apptabs/mobile/layout_bottom_text.xml",
+			want:     "apptabs/mobile/layout_top_text.xml",
 		},
 		{
 			name:     "leading: tab with icon only",
 			item:     container.NewTabItemWithIcon("", theme.InfoIcon(), canvas.NewCircle(theme.BackgroundColor())),
 			location: container.TabLocationLeading,
-			want:     "apptabs/mobile/layout_bottom_icon.xml",
+			want:     "apptabs/mobile/layout_top_icon.xml",
 		},
 		{
 			name:     "trailing: tab with icon and text",
@@ -283,9 +237,8 @@ func TestTabContainer_Layout(t *testing.T) {
 	}
 }
 
-func TestTabContainer_SetTabLocation(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_SetTabLocation(t *testing.T) {
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text 2")}
@@ -301,7 +254,7 @@ func TestTabContainer_SetTabLocation(t *testing.T) {
 
 	tabs.SetTabLocation(container.TabLocationLeading)
 	w.Resize(tabs.MinSize())
-	test.AssertRendersToMarkup(t, "apptabs/mobile/tab_location_bottom.xml", c, "leading is the same as bottom on mobile")
+	test.AssertRendersToMarkup(t, "apptabs/mobile/tab_location_top.xml", c, "leading is the same as top on mobile")
 
 	tabs.SetTabLocation(container.TabLocationBottom)
 	w.Resize(tabs.MinSize())
@@ -316,9 +269,8 @@ func TestTabContainer_SetTabLocation(t *testing.T) {
 	test.AssertRendersToMarkup(t, "apptabs/mobile/tab_location_top.xml", c)
 }
 
-func TestTabContainer_Tapped(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+func TestAppTabs_Tapped(t *testing.T) {
+	test.NewTempApp(t)
 
 	item1 := &container.TabItem{Text: "Test1", Content: widget.NewLabel("Text 1")}
 	item2 := &container.TabItem{Text: "Test2", Content: widget.NewLabel("Text 2")}
@@ -330,18 +282,18 @@ func TestTabContainer_Tapped(t *testing.T) {
 	w.Resize(fyne.NewSize(200, 100))
 	c := w.Canvas()
 
-	require.Equal(t, 0, tabs.CurrentTabIndex())
+	require.Equal(t, 0, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "apptabs/mobile/tapped_first_selected.xml", c)
 
 	test.TapCanvas(c, fyne.NewPos(75, 10))
-	assert.Equal(t, 1, tabs.CurrentTabIndex())
+	assert.Equal(t, 1, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "apptabs/mobile/tapped_second_selected.xml", c)
 
 	test.TapCanvas(c, fyne.NewPos(150, 10))
-	assert.Equal(t, 2, tabs.CurrentTabIndex())
+	assert.Equal(t, 2, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "apptabs/mobile/tapped_third_selected.xml", c)
 
 	test.TapCanvas(c, fyne.NewPos(10, 10))
-	require.Equal(t, 0, tabs.CurrentTabIndex())
+	require.Equal(t, 0, tabs.SelectedIndex())
 	test.AssertRendersToMarkup(t, "apptabs/mobile/tapped_first_selected.xml", c)
 }

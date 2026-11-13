@@ -14,10 +14,11 @@ func ApplyThemeTo(content fyne.CanvasObject, canv fyne.Canvas) {
 
 	switch o := content.(type) {
 	case fyne.Widget:
-		for _, co := range cache.Renderer(o).Objects() {
+		renderer := cache.Renderer(o)
+		for _, co := range renderer.Objects() {
 			ApplyThemeTo(co, canv)
 		}
-		cache.Renderer(o).Layout(content.Size()) // theme can cause sizing changes
+		renderer.Layout(content.Size()) // theme can cause sizing changes
 	case *fyne.Container:
 		for _, co := range o.Objects {
 			ApplyThemeTo(co, canv)
@@ -32,11 +33,20 @@ func ApplyThemeTo(content fyne.CanvasObject, canv fyne.Canvas) {
 // ApplySettings ensures that all widgets and themeable objects in an application will be updated for the current theme.
 // It also checks that scale changes are reflected if required
 func ApplySettings(set fyne.Settings, app fyne.App) {
+	ApplySettingsWithCallback(set, app, nil)
+}
+
+// ApplySettingsWithCallback ensures that all widgets and themeable objects in an application will be updated for the current theme.
+// It also checks that scale changes are reflected if required. Also it will call `onEveryWindow` on every window
+// interaction
+func ApplySettingsWithCallback(_ fyne.Settings, app fyne.App, onEveryWindow func(w fyne.Window)) {
 	for _, window := range app.Driver().AllWindows() {
 		ApplyThemeTo(window.Content(), window.Canvas())
-
 		for _, overlay := range window.Canvas().Overlays().List() {
 			ApplyThemeTo(overlay, window.Canvas())
+		}
+		if onEveryWindow != nil {
+			onEveryWindow(window)
 		}
 	}
 }

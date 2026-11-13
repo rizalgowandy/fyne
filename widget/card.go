@@ -34,20 +34,27 @@ func NewCard(title, subtitle string, content fyne.CanvasObject) *Card {
 // CreateRenderer is a private method to Fyne which links this widget to its renderer
 func (c *Card) CreateRenderer() fyne.WidgetRenderer {
 	c.ExtendBaseWidget(c)
+	th := c.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
 
-	header := canvas.NewText(c.Title, theme.ForegroundColor())
+	header := canvas.NewText(c.Title, th.Color(theme.ColorNameForeground, v))
 	header.TextStyle.Bold = true
-	subHeader := canvas.NewText(c.Subtitle, theme.ForegroundColor())
+	subHeader := canvas.NewText(c.Subtitle, header.Color)
 
-	objects := []fyne.CanvasObject{header, subHeader}
+	background := canvas.NewRectangle(th.Color(theme.ColorNameBackground, v))
+	background.CornerRadius = th.Size(theme.SizeNameCardRadius)
+	widget.ApplyShadowForLevel(&background.Shadow, widget.CardLevel, th.Color(theme.ColorNameShadow, v))
+	objects := []fyne.CanvasObject{background, header, subHeader}
 	if c.Image != nil {
 		objects = append(objects, c.Image)
 	}
 	if c.Content != nil {
 		objects = append(objects, c.Content)
 	}
-	r := &cardRenderer{widget.NewShadowingRenderer(objects, widget.CardLevel),
-		header, subHeader, c}
+	r := &cardRenderer{
+		widget.NewBaseRenderer(objects),
+		header, subHeader, c, background,
+	}
 	r.applyTheme()
 	return r
 }
@@ -87,11 +94,13 @@ func (c *Card) SetTitle(text string) {
 }
 
 type cardRenderer struct {
-	*widget.ShadowingRenderer
+	widget.BaseRenderer
 
 	header, subHeader *canvas.Text
 
 	card *Card
+
+	background *canvas.Rectangle
 }
 
 const (
@@ -100,9 +109,11 @@ const (
 
 // Layout the components of the card container.
 func (c *cardRenderer) Layout(size fyne.Size) {
-	pos := fyne.NewPos(theme.Padding()/2, theme.Padding()/2)
-	size = size.Subtract(fyne.NewSize(theme.Padding(), theme.Padding()))
-	c.LayoutShadow(size, pos)
+	padding := c.card.Theme().Size(theme.SizeNamePadding)
+	pos := fyne.NewSquareOffsetPos(padding / 2)
+	size = size.Subtract(fyne.NewSquareSize(padding))
+	c.background.Resize(size)
+	c.background.Move(pos)
 
 	if c.card.Image != nil {
 		c.card.Image.Move(pos)
@@ -110,9 +121,8 @@ func (c *cardRenderer) Layout(size fyne.Size) {
 		pos.Y += cardMediaHeight
 	}
 
-	contentPad := theme.Padding()
 	if c.card.Title != "" || c.card.Subtitle != "" {
-		titlePad := theme.Padding() * 2
+		titlePad := padding * 2
 		size.Width -= titlePad * 2
 		pos.X += titlePad
 		pos.Y += titlePad
@@ -121,14 +131,14 @@ func (c *cardRenderer) Layout(size fyne.Size) {
 			height := c.header.MinSize().Height
 			c.header.Move(pos)
 			c.header.Resize(fyne.NewSize(size.Width, height))
-			pos.Y += height + theme.Padding()
+			pos.Y += height + padding
 		}
 
 		if c.card.Subtitle != "" {
 			height := c.subHeader.MinSize().Height
 			c.subHeader.Move(pos)
 			c.subHeader.Resize(fyne.NewSize(size.Width, height))
-			pos.Y += height + theme.Padding()
+			pos.Y += height + padding
 		}
 
 		size.Width = size.Width + titlePad*2
@@ -136,15 +146,15 @@ func (c *cardRenderer) Layout(size fyne.Size) {
 		pos.Y += titlePad
 	}
 
-	size.Width -= contentPad * 2
-	pos.X += contentPad
+	size.Width -= padding * 2
+	pos.X += padding
 	if c.card.Content != nil {
-		height := size.Height - contentPad*2 - (pos.Y - theme.Padding()/2) // adjust for content and initial offset
+		height := size.Height - padding*2 - (pos.Y - padding/2) // adjust for content and initial offset
 		if c.card.Title != "" || c.card.Subtitle != "" {
-			height += contentPad
-			pos.Y -= contentPad
+			height += padding
+			pos.Y -= padding
 		}
-		c.card.Content.Move(pos.Add(fyne.NewPos(0, contentPad)))
+		c.card.Content.Move(pos.Add(fyne.NewPos(0, padding)))
 		c.card.Content.Resize(fyne.NewSize(size.Width, height))
 	}
 }
@@ -157,44 +167,44 @@ func (c *cardRenderer) MinSize() fyne.Size {
 	hasImage := c.card.Image != nil
 	hasContent := c.card.Content != nil
 
+	padding := c.card.Theme().Size(theme.SizeNamePadding)
 	if !hasHeader && !hasSubHeader && !hasContent { // just image, or nothing
 		if c.card.Image == nil {
-			return fyne.NewSize(theme.Padding(), theme.Padding()) // empty, just space for border
+			return fyne.NewSize(padding, padding) // empty, just space for border
 		}
-		return fyne.NewSize(c.card.Image.MinSize().Width+theme.Padding(), cardMediaHeight+theme.Padding())
+		return fyne.NewSize(c.card.Image.MinSize().Width+padding, cardMediaHeight+padding)
 	}
 
-	contentPad := theme.Padding()
-	min := fyne.NewSize(theme.Padding(), theme.Padding())
+	minSize := fyne.NewSize(padding, padding)
 	if hasImage {
-		min = fyne.NewSize(min.Width, min.Height+cardMediaHeight)
+		minSize = fyne.NewSize(minSize.Width, minSize.Height+cardMediaHeight)
 	}
 
 	if hasHeader || hasSubHeader {
-		titlePad := theme.Padding() * 2
-		min = min.Add(fyne.NewSize(0, titlePad*2))
+		titlePad := padding * 2
+		minSize = minSize.Add(fyne.NewSize(0, titlePad*2))
 		if hasHeader {
 			headerMin := c.header.MinSize()
-			min = fyne.NewSize(fyne.Max(min.Width, headerMin.Width+titlePad*2+theme.Padding()),
-				min.Height+headerMin.Height)
+			minSize = fyne.NewSize(max(minSize.Width, headerMin.Width+titlePad*2+padding),
+				minSize.Height+headerMin.Height)
 			if hasSubHeader {
-				min.Height += theme.Padding()
+				minSize.Height += padding
 			}
 		}
 		if hasSubHeader {
 			subHeaderMin := c.subHeader.MinSize()
-			min = fyne.NewSize(fyne.Max(min.Width, subHeaderMin.Width+titlePad*2+theme.Padding()),
-				min.Height+subHeaderMin.Height)
+			minSize = fyne.NewSize(max(minSize.Width, subHeaderMin.Width+titlePad*2+padding),
+				minSize.Height+subHeaderMin.Height)
 		}
 	}
 
 	if hasContent {
 		contentMin := c.card.Content.MinSize()
-		min = fyne.NewSize(fyne.Max(min.Width, contentMin.Width+contentPad*2+theme.Padding()),
-			min.Height+contentMin.Height+contentPad*2)
+		minSize = fyne.NewSize(max(minSize.Width, contentMin.Width+padding*3),
+			minSize.Height+contentMin.Height+padding*2)
 	}
 
-	return min
+	return minSize
 }
 
 func (c *cardRenderer) Refresh() {
@@ -203,28 +213,38 @@ func (c *cardRenderer) Refresh() {
 	c.subHeader.Text = c.card.Subtitle
 	c.subHeader.Refresh()
 
-	objects := []fyne.CanvasObject{c.header, c.subHeader}
+	objects := []fyne.CanvasObject{c.background, c.header, c.subHeader}
 	if c.card.Image != nil {
 		objects = append(objects, c.card.Image)
 	}
 	if c.card.Content != nil {
 		objects = append(objects, c.card.Content)
 	}
-	c.ShadowingRenderer.SetObjects(objects)
+	c.SetObjects(objects)
 
 	c.applyTheme()
 	c.Layout(c.card.Size())
+	c.background.Refresh()
 	canvas.Refresh(c.card.super())
 }
 
 // applyTheme updates this button to match the current theme
 func (c *cardRenderer) applyTheme() {
+	th := c.card.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+
 	if c.header != nil {
-		c.header.TextSize = theme.TextSize() * 1.7
-		c.header.Color = theme.ForegroundColor()
+		c.header.TextSize = th.Size(theme.SizeNameHeadingText)
+		c.header.Color = th.Color(theme.ColorNameForeground, v)
 	}
 	if c.subHeader != nil {
-		c.subHeader.TextSize = theme.TextSize()
-		c.subHeader.Color = theme.ForegroundColor()
+		c.subHeader.TextSize = th.Size(theme.SizeNameText)
+		c.subHeader.Color = th.Color(theme.ColorNameForeground, v)
 	}
+	if c.card.Content != nil {
+		c.card.Content.Refresh()
+	}
+	c.background.FillColor = th.Color(theme.ColorNameBackground, v)
+	c.background.Shadow.Color = th.Color(theme.ColorNameShadow, v)
+	c.background.CornerRadius = th.Size(theme.SizeNameCardRadius)
 }

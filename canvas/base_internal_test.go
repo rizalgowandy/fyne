@@ -10,10 +10,10 @@ import (
 
 func TestBase_MinSize(t *testing.T) {
 	base := &baseObject{}
-	min := base.MinSize()
+	minSize := base.MinSize()
 
-	assert.True(t, min.Width > 0)
-	assert.True(t, min.Height > 0)
+	assert.Positive(t, minSize.Width)
+	assert.Positive(t, minSize.Height)
 }
 
 func TestBase_Move(t *testing.T) {

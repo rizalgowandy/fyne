@@ -1,4 +1,4 @@
-// +build mobile
+//go:build mobile
 
 package widget_test
 
@@ -10,12 +10,12 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	internalWidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 func TestMenu_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(canvas.NewRectangle(color.Transparent))
 	defer w.Close()
@@ -27,9 +27,14 @@ func TestMenu_Layout(t *testing.T) {
 	sep := fyne.NewMenuItemSeparator()
 	item3 := fyne.NewMenuItem("C", nil)
 	subItem1 := fyne.NewMenuItem("subitem A", nil)
+	subItem1.Checked = true
 	subItem2 := fyne.NewMenuItem("subitem B", nil)
+	subItem2.Checked = true
+	subItem2.Icon = theme.InfoIcon()
 	subItem3 := fyne.NewMenuItem("subitem C (long)", nil)
+	subItem3.Icon = theme.MenuIcon()
 	subsubItem1 := fyne.NewMenuItem("subsubitem A (long)", nil)
+	subsubItem1.Icon = theme.FileIcon()
 	subsubItem2 := fyne.NewMenuItem("subsubitem B", nil)
 	subItem3.ChildMenu = fyne.NewMenu("", subsubItem1, subsubItem2)
 	item3.ChildMenu = fyne.NewMenu("", subItem1, subItem2, subItem3)
@@ -51,8 +56,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(500, 300),
 			menuPos:    fyne.NewPos(10, 10),
 			tapPositions: []fyne.Position{
-				fyne.NewPos(30, 100),
-				fyne.NewPos(100, 170),
+				fyne.NewPos(32, 103),
+				fyne.NewPos(102, 173),
 			},
 			want: "menu/mobile/layout_normal_with_submenus.xml",
 		},
@@ -71,8 +76,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(500, 300),
 			menuPos:    fyne.NewPos(410, 10),
 			tapPositions: []fyne.Position{
-				fyne.NewPos(430, 100), // open submenu
-				fyne.NewPos(300, 170), // open subsubmenu
+				fyne.NewPos(432, 103), // open submenu
+				fyne.NewPos(302, 173), // open subsubmenu
 			},
 			want: "menu/mobile/layout_no_space_on_right.xml",
 		},
@@ -80,8 +85,8 @@ func TestMenu_Layout(t *testing.T) {
 			windowSize: fyne.NewSize(200, 300),
 			menuPos:    fyne.NewPos(10, 10),
 			tapPositions: []fyne.Position{
-				fyne.NewPos(30, 100),  // open submenu
-				fyne.NewPos(100, 170), // open subsubmenu
+				fyne.NewPos(32, 103),  // open submenu
+				fyne.NewPos(102, 173), // open subsubmenu
 			},
 			want: "menu/mobile/layout_no_space_on_both_sides.xml",
 		},
@@ -119,9 +124,9 @@ func TestMenu_Layout(t *testing.T) {
 			}
 			test.AssertRendersToMarkup(t, tt.want, w.Canvas())
 			if tt.useTestTheme {
-				test.AssertImageMatches(t, "menu/layout_normal.png", c.Capture())
+				test.AssertImageMatches(t, "menu/mobile/layout_normal.png", c.Capture())
 				test.WithTestTheme(t, func() {
-					test.AssertImageMatches(t, "menu/layout_theme_changed.png", c.Capture())
+					test.AssertImageMatches(t, "menu/mobile/layout_theme_changed.png", c.Capture())
 				})
 			}
 		})
@@ -129,15 +134,15 @@ func TestMenu_Layout(t *testing.T) {
 }
 
 func TestMenu_Dragging(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	w := test.NewWindow(canvas.NewRectangle(color.Transparent))
 	defer w.Close()
 	w.SetPadded(false)
 	c := w.Canvas()
 
-	menu := fyne.NewMenu("",
+	menu := fyne.NewMenu(
+		"",
 		fyne.NewMenuItem("A", nil),
 		fyne.NewMenuItem("B", nil),
 		fyne.NewMenuItem("C", nil),

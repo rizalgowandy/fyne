@@ -10,29 +10,33 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/internal"
+	"fyne.io/fyne/v2/internal/painter/geom"
 	internalwidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-var _ fyne.Widget = (*colorWheel)(nil)
-var _ fyne.Tappable = (*colorWheel)(nil)
-var _ fyne.Draggable = (*colorWheel)(nil)
+var (
+	_ fyne.Widget    = (*colorWheel)(nil)
+	_ fyne.Tappable  = (*colorWheel)(nil)
+	_ fyne.Draggable = (*colorWheel)(nil)
+)
 
 // colorWheel displays a circular color gradient and triggers the callback when tapped.
 type colorWheel struct {
 	widget.BaseWidget
 	generator func(w, h int) image.Image
 	cache     draw.Image
-	onChange  func(int, int, int, int)
+	onChange  func(int, int, int, uint8)
 
 	Hue                   int // Range 0-360 (degrees)
 	Saturation, Lightness int // Range 0-100 (percent)
-	Alpha                 int // Range 0-255
+	Alpha                 uint8
 }
 
 // newColorWheel returns a new color area that triggers the given onChange callback when tapped.
-func newColorWheel(onChange func(int, int, int, int)) *colorWheel {
+func newColorWheel(onChange func(int, int, int, uint8)) *colorWheel {
 	a := &colorWheel{
 		onChange: onChange,
 	}
@@ -43,9 +47,7 @@ func newColorWheel(onChange func(int, int, int, int)) *colorWheel {
 		}
 		for x := 0; x < w; x++ {
 			for y := 0; y < h; y++ {
-				if c := a.colorAt(x, y, w, h); c != nil {
-					a.cache.Set(x, y, c)
-				}
+				a.cache.Set(x, y, a.colorAt(x, y, w, h))
 			}
 		}
 		return a.cache
@@ -55,7 +57,7 @@ func newColorWheel(onChange func(int, int, int, int)) *colorWheel {
 }
 
 // Cursor returns the cursor type of this widget.
-func (a *colorWheel) Cursor() desktop.Cursor {
+func (*colorWheel) Cursor() desktop.Cursor {
 	return desktop.CrosshairCursor
 }
 
@@ -64,11 +66,13 @@ func (a *colorWheel) CreateRenderer() fyne.WidgetRenderer {
 	raster := &canvas.Raster{
 		Generator: a.generator,
 	}
+	background := newCheckeredBackground(true)
 	x := canvas.NewLine(color.Black)
 	y := canvas.NewLine(color.Black)
 	return &colorWheelRenderer{
-		BaseRenderer: internalwidget.NewBaseRenderer([]fyne.CanvasObject{raster, x, y}),
+		BaseRenderer: internalwidget.NewBaseRenderer([]fyne.CanvasObject{background, raster, x, y}),
 		area:         a,
+		background:   background,
 		raster:       raster,
 		x:            x,
 		y:            y,
@@ -82,7 +86,7 @@ func (a *colorWheel) MinSize() fyne.Size {
 }
 
 // SetHSLA updates the selected color in the wheel.
-func (a *colorWheel) SetHSLA(hue, saturation, lightness, alpha int) {
+func (a *colorWheel) SetHSLA(hue, saturation, lightness int, alpha uint8) {
 	if a.Hue == hue && a.Saturation == saturation && a.Lightness == lightness && a.Alpha == alpha {
 		return
 	}
@@ -104,28 +108,28 @@ func (a *colorWheel) Dragged(event *fyne.DragEvent) {
 }
 
 // DragEnd is called when a pointer drag ends
-func (a *colorWheel) DragEnd() {
+func (*colorWheel) DragEnd() {
 }
 
 func (a *colorWheel) colorAt(x, y, w, h int) color.Color {
 	width, height := float64(w), float64(h)
-	dx := float64(x) - (width / 2.0)
-	dy := float64(y) - (height / 2.0)
+	dx := float64(x) - (width / 2)
+	dy := float64(y) - (height / 2)
 	radius, radians := cmplx.Polar(complex(dx, dy))
-	limit := math.Min(width, height) / 2.0
+	limit := math.Min(width, height) / 2
 	if radius > limit {
 		// Out of bounds
-		return theme.BackgroundColor()
+		return color.Transparent
 	}
-	degrees := radians * (180.0 / math.Pi)
+	degrees := radians * (geom.AngleHalf / math.Pi)
 	hue := wrapHue(int(degrees))
-	saturation := int(radius / limit * 100.0)
+	saturation := int(radius / limit * 100)
 	red, green, blue := hslToRgb(hue, saturation, a.Lightness)
 	return &color.NRGBA{
-		R: uint8(red),
-		G: uint8(green),
-		B: uint8(blue),
-		A: uint8(a.Alpha),
+		R: red,
+		G: green,
+		B: blue,
+		A: a.Alpha,
 	}
 }
 
@@ -135,16 +139,16 @@ func (a *colorWheel) locationForPosition(pos fyne.Position) (x, y int) {
 	if can != nil {
 		x, y = can.PixelCoordinateForPosition(pos)
 	}
-	return
+	return x, y
 }
 
-func (a *colorWheel) selection(width, height float32) (float32, float32) {
+func (a *colorWheel) selection(width, height float32) (x, y float32) {
 	w, h := float64(width), float64(height)
-	radius := float64(a.Saturation) / 100.0 * math.Min(w, h) / 2.0
+	radius := float64(a.Saturation) / 100 * math.Min(w, h) / 2
 	degrees := float64(a.Hue)
-	radians := degrees * math.Pi / 180.0
+	radians := degrees * math.Pi / geom.AngleHalf
 	c := cmplx.Rect(radius, radians)
-	return float32(real(c) + w/2.0), float32(imag(c) + h/2.0)
+	return float32(real(c) + w/2), float32(imag(c) + h/2)
 }
 
 func (a *colorWheel) trigger(pos fyne.Position) {
@@ -155,14 +159,14 @@ func (a *colorWheel) trigger(pos fyne.Position) {
 		dx := float64(x) - (width / 2)
 		dy := float64(y) - (height / 2)
 		radius, radians := cmplx.Polar(complex(dx, dy))
-		limit := math.Min(width, height) / 2.0
+		limit := math.Min(width, height) / 2
 		if radius > limit {
 			// Out of bounds
 			return
 		}
-		degrees := radians * (180.0 / math.Pi)
+		degrees := radians * (geom.AngleHalf / math.Pi)
 		a.Hue = wrapHue(int(degrees))
-		a.Saturation = int(radius / limit * 100.0)
+		a.Saturation = int(radius / limit * 100)
 		f(a.Hue, a.Saturation, a.Lightness, a.Alpha)
 	}
 	a.Refresh()
@@ -170,25 +174,25 @@ func (a *colorWheel) trigger(pos fyne.Position) {
 
 type colorWheelRenderer struct {
 	internalwidget.BaseRenderer
-	area   *colorWheel
-	raster *canvas.Raster
-	x, y   *canvas.Line
+	area       *colorWheel
+	background *canvas.Raster
+	raster     *canvas.Raster
+	x, y       *canvas.Line
 }
 
 func (r *colorWheelRenderer) Layout(size fyne.Size) {
-	if f := r.area.selection; f != nil {
-		x, y := f(size.Width, size.Height)
-		r.x.Position1 = fyne.NewPos(0, y)
-		r.x.Position2 = fyne.NewPos(size.Width, y)
-		r.y.Position1 = fyne.NewPos(x, 0)
-		r.y.Position2 = fyne.NewPos(x, size.Height)
-	}
+	x, y := r.area.selection(size.Width, size.Height)
+	r.x.Position1 = fyne.NewPos(0, y)
+	r.x.Position2 = fyne.NewPos(size.Width, y)
+	r.y.Position1 = fyne.NewPos(x, 0)
+	r.y.Position2 = fyne.NewPos(x, size.Height)
 	r.raster.Move(fyne.NewPos(0, 0))
 	r.raster.Resize(size)
+	r.background.Resize(size)
 }
 
 func (r *colorWheelRenderer) MinSize() fyne.Size {
-	return r.raster.MinSize().Max(fyne.NewSize(128, 128))
+	return internal.MaxSizes(r.raster.MinSize(), fyne.NewSize(128, 128)) //revive:disable-line:add-constant
 }
 
 func (r *colorWheelRenderer) Refresh() {
@@ -198,10 +202,11 @@ func (r *colorWheelRenderer) Refresh() {
 	} else {
 		r.Layout(s)
 	}
-	r.x.StrokeColor = theme.ForegroundColor()
+	r.x.StrokeColor = theme.Color(theme.ColorNameForeground)
 	r.x.Refresh()
-	r.y.StrokeColor = theme.ForegroundColor()
+	r.y.StrokeColor = theme.Color(theme.ColorNameForeground)
 	r.y.Refresh()
 	r.raster.Refresh()
+	r.background.Refresh()
 	canvas.Refresh(r.area)
 }

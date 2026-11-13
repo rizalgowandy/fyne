@@ -3,50 +3,89 @@ package widget
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/theme"
 )
 
-var _ fyne.Validatable = (*Entry)(nil)
+var (
+	_ fyne.Requireable = (*Entry)(nil)
+	_ fyne.Validatable = (*Entry)(nil)
+)
 
-// Validate validates the current text in the widget
-func (e *Entry) Validate() error {
-	if e.Validator == nil {
-		return nil
+// HasValue is used for required validation and returns true if the text is not empty.
+//
+// Since: 2.8
+func (e *Entry) HasValue() bool {
+	return e.Text != ""
+}
+
+// SetOnRequiredChanged is intended for parent widgets or containers to hook into the required state.
+// The function might be overwritten by a parent that cares about child state (e.g. widget.Form).
+//
+// Since: 2.8
+func (e *Entry) SetOnRequiredChanged(callback func(bool)) {
+	e.onRequiredChanged = callback
+}
+
+// Validate validates the current text in the widget.
+func (e *Entry) Validate() (err error) {
+	if e.Validator != nil {
+		err = e.Validator(e.Text)
 	}
 
-	err := e.Validator(e.Text)
 	e.SetValidationError(err)
 	return err
+}
+
+func (e *Entry) validateWithoutRefresh() {
+	var err error
+
+	if e.Validator != nil {
+		err = e.Validator(e.Text)
+	}
+	e.setValidationErrorWithoutRefresh(err)
 }
 
 // SetOnValidationChanged is intended for parent widgets or containers to hook into the validation.
 // The function might be overwritten by a parent that cares about child validation (e.g. widget.Form).
 func (e *Entry) SetOnValidationChanged(callback func(error)) {
-	if callback != nil {
-		e.onValidationChanged = callback
+	e.onValidationChanged = callback
+
+	if e.Validator != nil && callback != nil && e.Text != "" {
+		if err := e.Validator(e.Text); err != nil {
+			callback(err)
+		}
 	}
 }
 
-// SetValidationError manually updates the validation status until the next input change
+// SetValidationError manually updates the validation status until the next input change.
 func (e *Entry) SetValidationError(err error) {
-	if e.Validator == nil {
-		return
+	if e.setValidationErrorWithoutRefresh(err) {
+		e.Refresh()
 	}
-	if err == nil && e.validationError == nil {
-		return
-	}
+}
 
-	if (err == nil && e.validationError != nil) || (e.validationError == nil && err != nil) ||
-		err.Error() != e.validationError.Error() {
+// setValidationErrorWithoutRefresh sets the validation error and returns a bool to indicate if it changes.
+// It assumes that the widget has a validator.
+func (e *Entry) setValidationErrorWithoutRefresh(err error) bool {
+	if e.AlwaysShowValidationError {
 		e.validationError = err
-
 		if e.onValidationChanged != nil {
 			e.onValidationChanged(err)
 		}
-
-		e.Refresh()
+		return true
 	}
+
+	gone := err == nil
+	if !gone && (e.focused || (!e.hasFocused && e.Text == "")) {
+		return false
+	}
+
+	e.validationError = err
+	if e.onValidationChanged != nil {
+		e.onValidationChanged(err)
+	}
+
+	return true
 }
 
 var _ fyne.Widget = (*validationStatus)(nil)
@@ -69,46 +108,47 @@ func (r *validationStatus) CreateRenderer() fyne.WidgetRenderer {
 	icon := &canvas.Image{}
 	icon.Hide()
 	return &validationStatusRenderer{
-		BaseRenderer: widget.NewBaseRenderer([]fyne.CanvasObject{icon}),
-		icon:         icon,
-		entry:        r.entry,
+		WidgetRenderer: NewSimpleRenderer(icon),
+		icon:           icon,
+		entry:          r.entry,
 	}
 }
 
 var _ fyne.WidgetRenderer = (*validationStatusRenderer)(nil)
 
 type validationStatusRenderer struct {
-	widget.BaseRenderer
+	fyne.WidgetRenderer
 	entry *Entry
 	icon  *canvas.Image
 }
 
 func (r *validationStatusRenderer) Layout(size fyne.Size) {
-	r.icon.Resize(fyne.NewSize(theme.IconInlineSize(), theme.IconInlineSize()))
-	r.icon.Move(fyne.NewPos((size.Width-theme.IconInlineSize())/2, (size.Height-theme.IconInlineSize())/2))
+	iconSize := r.entry.Theme().Size(theme.SizeNameInlineIcon)
+	r.icon.Resize(fyne.NewSquareSize(iconSize))
+	r.icon.Move(fyne.NewPos((size.Width-iconSize)/2, (size.Height-iconSize)/2))
 }
 
 func (r *validationStatusRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(theme.IconInlineSize(), theme.IconInlineSize())
+	iconSize := r.entry.Theme().Size(theme.SizeNameInlineIcon)
+	return fyne.NewSquareSize(iconSize)
 }
 
 func (r *validationStatusRenderer) Refresh() {
-	r.entry.propertyLock.RLock()
-	defer r.entry.propertyLock.RUnlock()
-	if r.entry.Text == "" {
+	th := r.entry.Theme()
+	if r.entry.Disabled() {
 		r.icon.Hide()
 		return
 	}
 
-	if r.entry.validationError == nil {
-		r.icon.Resource = theme.ConfirmIcon()
+	if r.entry.validationError == nil && r.entry.Text != "" && r.entry.Validator != nil {
+		r.icon.Resource = th.Icon(theme.IconNameConfirm)
 		r.icon.Show()
-	} else if !r.entry.focused {
-		r.icon.Resource = theme.NewErrorThemedResource(theme.ErrorIcon())
+	} else if r.entry.validationError != nil && !r.entry.focused && (r.entry.dirty || r.entry.AlwaysShowValidationError) {
+		r.icon.Resource = theme.NewErrorThemedResource(th.Icon(theme.IconNameError))
 		r.icon.Show()
 	} else {
 		r.icon.Hide()
 	}
 
-	canvas.Refresh(r.icon)
+	r.icon.Refresh()
 }

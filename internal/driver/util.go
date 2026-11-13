@@ -86,16 +86,16 @@ func FindObjectAtPositionMatching(mouse fyne.Position, matches func(object fyne.
 // - the obj's children are traversed by calling walkObjects on each of the visible items
 // - afterChildren is called for the obj after traversing the obj's children
 // The walk can be aborted by returning true in one of the functions:
-// - if beforeChildren returns true, further traversing is stopped immediately, the after function
-//   will not be called for the obj where the walk stopped, however, it will be called for all its
-//   parents
+//   - if beforeChildren returns true, further traversing is stopped immediately, the after function
+//     will not be called for the obj where the walk stopped, however, it will be called for all its
+//     parents
 func ReverseWalkVisibleObjectTree(
 	obj fyne.CanvasObject,
 	beforeChildren func(fyne.CanvasObject, fyne.Position, fyne.Position, fyne.Size) bool,
-	afterChildren func(fyne.CanvasObject, fyne.CanvasObject),
+	afterChildren func(fyne.CanvasObject, fyne.Position, fyne.CanvasObject),
 ) bool {
 	clipSize := fyne.NewSize(math.MaxInt32, math.MaxInt32)
-	return walkObjectTree(obj, true, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, true)
+	return walkObjectTree(obj, true, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, true, cache.Renderer)
 }
 
 // WalkCompleteObjectTree will walk an object tree for all objects (ignoring visible state) executing the passed
@@ -104,16 +104,16 @@ func ReverseWalkVisibleObjectTree(
 // - the obj's children are traversed by calling walkObjects on each of the items
 // - afterChildren is called for the obj after traversing the obj's children
 // The walk can be aborted by returning true in one of the functions:
-// - if beforeChildren returns true, further traversing is stopped immediately, the after function
-//   will not be called for the obj where the walk stopped, however, it will be called for all its
-//   parents
+//   - if beforeChildren returns true, further traversing is stopped immediately, the after function
+//     will not be called for the obj where the walk stopped, however, it will be called for all its
+//     parents
 func WalkCompleteObjectTree(
 	obj fyne.CanvasObject,
 	beforeChildren func(fyne.CanvasObject, fyne.Position, fyne.Position, fyne.Size) bool,
-	afterChildren func(fyne.CanvasObject, fyne.CanvasObject),
+	afterChildren func(fyne.CanvasObject, fyne.Position, fyne.CanvasObject),
 ) bool {
 	clipSize := fyne.NewSize(math.MaxInt32, math.MaxInt32)
-	return walkObjectTree(obj, false, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, false)
+	return walkObjectTree(obj, false, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, false, cache.Renderer)
 }
 
 // WalkVisibleObjectTree will walk an object tree for all visible objects executing the passed functions following
@@ -122,16 +122,27 @@ func WalkCompleteObjectTree(
 // - the obj's children are traversed by calling walkObjects on each of the visible items
 // - afterChildren is called for the obj after traversing the obj's children
 // The walk can be aborted by returning true in one of the functions:
-// - if beforeChildren returns true, further traversing is stopped immediately, the after function
-//   will not be called for the obj where the walk stopped, however, it will be called for all its
-//   parents
+//   - if beforeChildren returns true, further traversing is stopped immediately, the after function
+//     will not be called for the obj where the walk stopped, however, it will be called for all its
+//     parents
 func WalkVisibleObjectTree(
 	obj fyne.CanvasObject,
 	beforeChildren func(fyne.CanvasObject, fyne.Position, fyne.Position, fyne.Size) bool,
-	afterChildren func(fyne.CanvasObject, fyne.CanvasObject),
+	afterChildren func(fyne.CanvasObject, fyne.Position, fyne.CanvasObject),
+) bool {
+	return WalkVisibleObjectTreeRenderers(obj, beforeChildren, afterChildren, cache.Renderer)
+}
+
+// WalkVisibleObjectTreeRenderers walks like WalkVisibleObjectTree, looking up
+// each widget's renderer with renderer just before beforeChildren is called.
+func WalkVisibleObjectTreeRenderers(
+	obj fyne.CanvasObject,
+	beforeChildren func(fyne.CanvasObject, fyne.Position, fyne.Position, fyne.Size) bool,
+	afterChildren func(fyne.CanvasObject, fyne.Position, fyne.CanvasObject),
+	renderer func(fyne.Widget) fyne.WidgetRenderer,
 ) bool {
 	clipSize := fyne.NewSize(math.MaxInt32, math.MaxInt32)
-	return walkObjectTree(obj, false, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, true)
+	return walkObjectTree(obj, false, nil, fyne.NewPos(0, 0), fyne.NewPos(0, 0), clipSize, beforeChildren, afterChildren, true, renderer)
 }
 
 func walkObjectTree(
@@ -141,8 +152,9 @@ func walkObjectTree(
 	offset, clipPos fyne.Position,
 	clipSize fyne.Size,
 	beforeChildren func(fyne.CanvasObject, fyne.Position, fyne.Position, fyne.Size) bool,
-	afterChildren func(fyne.CanvasObject, fyne.CanvasObject),
+	afterChildren func(fyne.CanvasObject, fyne.Position, fyne.CanvasObject),
 	requireVisible bool,
+	rendererOf func(fyne.Widget) fyne.WidgetRenderer,
 ) bool {
 	if obj == nil {
 		return false
@@ -152,15 +164,22 @@ func walkObjectTree(
 	}
 	pos := obj.Position().Add(offset)
 
+	// The renderer lookup is a cache map hit per node per walk, and a walk runs
+	// several times per frame - so look it up once here and hand it to the clip
+	// check rather than letting IsClip repeat it.
 	var children []fyne.CanvasObject
+	var renderer fyne.WidgetRenderer
 	switch co := obj.(type) {
 	case *fyne.Container:
 		children = co.Objects
 	case fyne.Widget:
-		children = cache.Renderer(co).Objects()
+		if requireVisible || cache.IsRendered(co) {
+			renderer = rendererOf(co)
+			children = renderer.Objects()
+		}
 	}
 
-	if _, ok := obj.(fyne.Scrollable); ok {
+	if isClipWithRenderer(obj, renderer) {
 		clipPos = pos
 		clipSize = obj.Size()
 	}
@@ -173,7 +192,7 @@ func walkObjectTree(
 
 	cancelled := false
 	followChild := func(child fyne.CanvasObject) bool {
-		if walkObjectTree(child, reverse, obj, pos, clipPos, clipSize, beforeChildren, afterChildren, requireVisible) {
+		if walkObjectTree(child, reverse, obj, pos, clipPos, clipSize, beforeChildren, afterChildren, requireVisible, rendererOf) {
 			cancelled = true
 			return true
 		}
@@ -194,7 +213,39 @@ func walkObjectTree(
 	}
 
 	if afterChildren != nil {
-		afterChildren(obj, parent)
+		afterChildren(obj, pos, parent)
 	}
 	return cancelled
+}
+
+func IsClip(o fyne.CanvasObject) bool {
+	if _, scroll := o.(fyne.Scrollable); scroll {
+		return true
+	}
+
+	wid, isWid := o.(fyne.Widget)
+	if !isWid {
+		return false
+	}
+	r, rendered := cache.CachedRenderer(wid)
+	if !rendered {
+		return false
+	}
+
+	_, clip := r.(interface{ IsClip() })
+	return clip
+}
+
+// isClipWithRenderer is IsClip for a caller that already holds the object's
+// renderer (nil if it has none), saving the repeated cache lookup.
+func isClipWithRenderer(o fyne.CanvasObject, r fyne.WidgetRenderer) bool {
+	if _, scroll := o.(fyne.Scrollable); scroll {
+		return true
+	}
+	if r == nil {
+		return false
+	}
+
+	_, clip := r.(interface{ IsClip() })
+	return clip
 }

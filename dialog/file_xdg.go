@@ -1,70 +1,37 @@
-// +build linux openbsd freebsd netbsd
-// +build !android
+//go:build (linux || openbsd || freebsd || netbsd) && !android && !wasm && !js && !tamago && !noos
 
 package dialog
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/storage"
 )
 
-func getFavoriteLocation(homeURI fyne.URI, name, fallbackName string) (fyne.URI, error) {
-	cmdName := "xdg-user-dir"
+func getFavoriteLocation(homeURI fyne.URI, name string) (fyne.URI, error) {
+	const cmdName = "xdg-user-dir"
 	if _, err := exec.LookPath(cmdName); err != nil {
-		return storage.Child(homeURI, fallbackName) // no lookup possible
+		return storage.Child(homeURI, name) // no lookup possible
 	}
 
-	cmd := exec.Command(cmdName, name)
+	lookupName := strings.ToUpper(name)
+	cmd := exec.Command(cmdName, lookupName) //gosec:disable G204 - Probably okay to allow arbitrary input for xdg-user-dir. Also, the input is trustworthy as of 2026-06-24.
 	loc, err := cmd.Output()
 	if err != nil {
-		return storage.Child(homeURI, fallbackName)
+		return storage.Child(homeURI, name)
 	}
 
 	// Remove \n at the end
 	loc = loc[:len(loc)-1]
 	locURI := storage.NewFileURI(string(loc))
 
-	if locURI.String() == homeURI.String() {
-		fallback, _ := storage.Child(homeURI, fallbackName)
-		return fallback, fmt.Errorf("this computer does not define a %s folder", name)
+	if strings.TrimRight(locURI.String(), "/") == strings.TrimRight(homeURI.String(), "/") {
+		fallback, _ := storage.Child(homeURI, name)
+		return fallback, fmt.Errorf("this computer does not define a %s folder", lookupName)
 	}
 
 	return locURI, nil
-}
-
-func getFavoriteLocations() (map[string]fyne.ListableURI, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	homeURI := storage.NewFileURI(homeDir)
-
-	favoriteNames := getFavoriteOrder()
-	arguments := map[string]string{
-		"Documents": "DOCUMENTS",
-		"Downloads": "DOWNLOAD",
-	}
-
-	favoriteLocations := make(map[string]fyne.ListableURI)
-	for _, favName := range favoriteNames {
-		var uri fyne.URI
-		if favName == "Home" {
-			uri = homeURI
-		} else {
-			uri, err = getFavoriteLocation(homeURI, arguments[favName], favName)
-		}
-
-		listURI, err1 := storage.ListerForURI(uri)
-		if err1 != nil {
-			err = err1
-			continue
-		}
-		favoriteLocations[favName] = listURI
-	}
-
-	return favoriteLocations, err
 }

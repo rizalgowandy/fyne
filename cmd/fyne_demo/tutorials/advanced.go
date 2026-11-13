@@ -1,7 +1,7 @@
 package tutorials
 
 import (
-	"fmt"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -10,8 +10,14 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-func scaleString(c fyne.Canvas) string {
-	return fmt.Sprintf("%0.2f", c.Scale())
+func scaleToString(c fyne.Canvas) string {
+	return strconv.FormatFloat(float64(c.Scale()), 'f', 2, 32)
+}
+
+func textureScaleToString(c fyne.Canvas) string {
+	pixels, _ := c.PixelCoordinateForPosition(fyne.NewPos(1, 1))
+	texScale := float32(pixels) / c.Scale()
+	return strconv.FormatFloat(float64(texScale), 'f', 2, 32)
 }
 
 func prependTo(g *fyne.Container, s string) {
@@ -19,24 +25,28 @@ func prependTo(g *fyne.Container, s string) {
 	g.Refresh()
 }
 
-func setScaleText(obj *widget.Label, win fyne.Window) {
-	for obj.Visible() {
-		obj.SetText(scaleString(win.Canvas()))
-
-		time.Sleep(time.Second)
-	}
-}
-
 // advancedScreen loads a panel that shows details and settings that are a bit
 // more detailed than normally needed.
 func advancedScreen(win fyne.Window) fyne.CanvasObject {
 	scale := widget.NewLabel("")
+	tex := widget.NewLabel("")
 
 	screen := widget.NewCard("Screen info", "", widget.NewForm(
 		&widget.FormItem{Text: "Scale", Widget: scale},
+		&widget.FormItem{Text: "Texture Scale", Widget: tex},
 	))
 
-	go setScaleText(scale, win)
+	ticker := time.NewTicker(time.Second)
+	OnChangeFuncs = append(OnChangeFuncs, ticker.Stop)
+
+	go func(canvas fyne.Canvas) {
+		for range ticker.C {
+			fyne.Do(func() {
+				scale.SetText(scaleToString(canvas))
+				tex.SetText(textureScaleToString(canvas))
+			})
+		}
+	}(win.Canvas())
 
 	label := widget.NewLabel("Just type...")
 	generic := container.NewVBox()
@@ -60,16 +70,37 @@ func advancedScreen(win fyne.Window) fyne.CanvasObject {
 		})
 	}
 
+	buildStatus, ok := fyne.CurrentApp().Metadata().Custom["HelperText"]
+	if !ok {
+		buildStatus = "No helper text provided at compile time."
+	}
+	labelBuildStatus := widget.NewLabel(buildStatus)
+
+	deskWin, ok := win.(desktop.Window)
+	secondary := widget.NewButton("Fullscreen Secondary", func() {
+		if win.FullScreen() {
+			win.SetFullScreen(false)
+		} else if ok {
+			deskWin.RequestFullScreenSecondary()
+		}
+	})
+	if !ok || !fyne.CurrentApp().Driver().(desktop.Driver).HasSecondaryDisplay() {
+		secondary.Disable()
+	}
+
 	return container.NewHBox(
-		container.NewVBox(screen,
+		container.NewVBox(
+			screen,
 			widget.NewButton("Custom Theme", func() {
 				fyne.CurrentApp().Settings().SetTheme(newCustomTheme())
 			}),
 			widget.NewButton("Fullscreen", func() {
 				win.SetFullScreen(!win.FullScreen())
 			}),
+			secondary,
 		),
-		container.NewBorder(label, nil, nil, nil,
+		container.NewBorder(
+			label, labelBuildStatus, nil, nil,
 			container.NewGridWithColumns(2, genericCard, deskCard),
 		),
 	)

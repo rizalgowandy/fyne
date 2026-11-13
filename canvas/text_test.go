@@ -1,42 +1,83 @@
 package canvas_test
 
 import (
+	"image"
 	"image/color"
+	"io"
+	"log"
+	"os"
 	"testing"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal/cache"
+	"fyne.io/fyne/v2/internal/painter"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/stretchr/testify/assert"
 )
 
+func TestText_FontSource(t *testing.T) {
+	// Discarding log output for tests
+	// The following method logs an error:
+	// test.NewWindow(text).Canvas().Capture()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	text := canvas.NewText("Test", color.NRGBA{0, 0, 0, 0xff})
+	c := test.NewWindow(text).Canvas()
+
+	text.FontSource = test.Theme().Font(fyne.TextStyle{Bold: true})
+	img1 := c.Capture()
+	text.FontSource = test.Theme().Font(fyne.TextStyle{Italic: true})
+	img2 := c.Capture()
+	assert.NotEqual(t, img1.(*image.NRGBA).Pix, img2.(*image.NRGBA).Pix)
+
+	text.FontSource = fyne.NewStaticResource("corrupt", []byte{})
+	assert.NotPanics(t, func() {
+		test.NewWindow(text).Canvas().Capture()
+	})
+}
+
 func TestText_MinSize(t *testing.T) {
 	text := canvas.NewText("Test", color.NRGBA{0, 0, 0, 0xff})
-	min := text.MinSize()
+	minSize := text.MinSize()
 
-	assert.True(t, min.Width > 0)
-	assert.True(t, min.Height > 0)
+	assert.Positive(t, minSize.Width)
+	assert.Positive(t, minSize.Height)
 
 	text = canvas.NewText("Test2", color.NRGBA{0, 0, 0, 0xff})
 	min2 := text.MinSize()
-	assert.True(t, min2.Width > min.Width)
+	assert.Greater(t, min2.Width, minSize.Width)
+}
+
+func TestText_MinSize_FollowsChanges(t *testing.T) {
+	test.NewTempApp(t)
+	text := canvas.NewText("a", color.Black)
+	one := text.MinSize()
+	assert.Equal(t, one, text.MinSize(), "asked again, the same")
+	text.Text = "aaaa"
+	assert.Greater(t, text.MinSize().Width, one.Width)
+	text.TextSize *= 2
+	assert.Greater(t, text.MinSize().Height, one.Height)
+	text.TextStyle.Bold = true
+	bold := text.MinSize()
+	text.TextStyle.Bold = false
+	assert.NotEqual(t, bold, text.MinSize())
 }
 
 func TestText_MinSize_NoMultiLine(t *testing.T) {
 	text := canvas.NewText("Break", color.NRGBA{0, 0, 0, 0xff})
-	min := text.MinSize()
+	minSize := text.MinSize()
 
 	text = canvas.NewText("Bre\nak", color.NRGBA{0, 0, 0, 0xff})
 	min2 := text.MinSize()
-	assert.True(t, min2.Width > min.Width)
-	assert.True(t, min2.Height == min.Height)
+	assert.Greater(t, min2.Width, minSize.Width)
+	assert.True(t, min2.Height == minSize.Height)
 }
 
 func TestText_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
 	for name, tt := range map[string]struct {
 		text  string
@@ -105,16 +146,119 @@ func TestText_Layout(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			text := canvas.NewText(tt.text, theme.ForegroundColor())
+			text := canvas.NewText(tt.text, theme.Color(theme.ColorNameForeground))
 			text.Alignment = tt.align
+			text.Resize(tt.size)
 
-			window := test.NewWindow(text)
-			window.SetPadded(false)
-			window.Resize(text.MinSize().Max(tt.size))
-
-			test.AssertImageMatches(t, "text/layout_"+name+".png", window.Canvas().Capture())
-
-			window.Close()
+			test.AssertObjectRendersToImage(t, "text/layout_"+name+".png", text)
 		})
 	}
+}
+
+func TestText_CarriageReturn(t *testing.T) {
+	test.NewTempApp(t)
+
+	for name, tt := range map[string]struct {
+		text  string
+		align fyne.TextAlign
+		size  fyne.Size
+	}{
+		"short_leading_small": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignLeading,
+			size:  fyne.NewSize(1, 1),
+		},
+		"short_leading_large": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignLeading,
+			size:  fyne.NewSize(500, 101),
+		},
+		"long_leading_small": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignLeading,
+			size:  fyne.NewSize(1, 1),
+		},
+		"long_leading_large": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignLeading,
+			size:  fyne.NewSize(500, 101),
+		},
+		"short_center_small": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignCenter,
+			size:  fyne.NewSize(1, 1),
+		},
+		"short_center_large": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignCenter,
+			size:  fyne.NewSize(500, 101),
+		},
+		"long_center_small": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignCenter,
+			size:  fyne.NewSize(1, 1),
+		},
+		"long_center_large": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignCenter,
+			size:  fyne.NewSize(500, 101),
+		},
+		"short_trailing_small": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignTrailing,
+			size:  fyne.NewSize(1, 1),
+		},
+		"short_trailing_large": {
+			text:  "\ra\rb\rc\r",
+			align: fyne.TextAlignTrailing,
+			size:  fyne.NewSize(500, 101),
+		},
+		"long_trailing_small": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignTrailing,
+			size:  fyne.NewSize(1, 1),
+		},
+		"long_trailing_large": {
+			text:  "\ra\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\rq\rr\rs\rt\ru\rv\rw\rx\ry\rz\rA\rB\rC\rD\rE\rF\rG\rH\rI\rJ\rK\rL\rM\rN\rO\rP\rQ\rR\rS\rT\rU\rV\rW\rX\rY\rZ\r",
+			align: fyne.TextAlignTrailing,
+			size:  fyne.NewSize(500, 101),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := canvas.NewText(tt.text, theme.Color(theme.ColorNameForeground))
+			text.Alignment = tt.align
+			text.Resize(tt.size)
+
+			test.AssertObjectRendersToImage(t, "text/layout_"+name+".png", text)
+		})
+	}
+}
+
+type monoFontTheme struct {
+	fyne.Theme
+	mono fyne.Resource
+}
+
+func (m *monoFontTheme) Font(s fyne.TextStyle) fyne.Resource {
+	if s.Monospace {
+		return m.mono
+	}
+	return m.Theme.Font(s)
+}
+
+func TestText_MinSize_ThemeOverrideFont(t *testing.T) {
+	test.NewTempApp(t)
+	th := &monoFontTheme{Theme: test.Theme(), mono: theme.DefaultTextFont()}
+	style := fyne.TextStyle{Monospace: true}
+	want, _ := painter.RenderedTextSize("ABCDEFG", 21, style, th.mono)
+
+	plain := &canvas.Text{Text: "ABCDEFG", TextSize: 21, TextStyle: style}
+	assert.NotEqual(t, want, plain.MinSize(), "the fonts must measure differently for this test")
+
+	under := &canvas.Text{Text: "ABCDEFG", TextSize: 21, TextStyle: style}
+	cache.OverrideTheme(under, th)
+	assert.Equal(t, want, under.MinSize())
+
+	cache.OverrideTheme(plain, th)
+	assert.Equal(t, want, plain.MinSize(), "a measured text follows its new theme scope")
 }

@@ -5,6 +5,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal"
 	internalwidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -22,12 +23,12 @@ type colorChannel struct {
 }
 
 // newColorChannel returns a new color channel control for the channel with the given name.
-func newColorChannel(name string, min, max, value int, onChanged func(int)) *colorChannel {
+func newColorChannel(name string, minValue, maxValue, value int, onChanged func(int)) *colorChannel {
 	c := &colorChannel{
 		name:      name,
-		min:       min,
-		max:       max,
-		value:     clamp(value, min, max),
+		min:       minValue,
+		max:       maxValue,
+		value:     clamp(value, minValue, maxValue),
 		onChanged: onChanged,
 	}
 	c.ExtendBaseWidget(c)
@@ -107,7 +108,7 @@ func (r *colorChannelRenderer) MinSize() fyne.Size {
 	eMin := r.entry.MinSize()
 	return fyne.NewSize(
 		lMin.Width+sMin.Width+eMin.Width,
-		fyne.Max(lMin.Height, fyne.Max(sMin.Height, eMin.Height)),
+		max(lMin.Height, sMin.Height, eMin.Height),
 	)
 }
 
@@ -124,31 +125,64 @@ func (r *colorChannelRenderer) updateObjects() {
 }
 
 type colorChannelEntry struct {
-	widget.Entry
+	userChangeEntry
 }
 
 func newColorChannelEntry(c *colorChannel) *colorChannelEntry {
-	e := &colorChannelEntry{
-		Entry: widget.Entry{
-			Text: "0",
-			OnChanged: func(text string) {
-				value, err := strconv.Atoi(text)
-				if err != nil {
-					fyne.LogError("Couldn't parse: "+text, err)
-				} else {
-					c.SetValue(value)
-				}
-			},
-			// TODO add number min/max validator
-		},
-	}
+	e := &colorChannelEntry{}
+	e.Text = "0"
 	e.ExtendBaseWidget(e)
+	e.setOnChanged(func(text string) {
+		value, err := strconv.Atoi(text)
+		if err != nil {
+			fyne.LogError("Couldn't parse: "+text, err)
+			return
+		}
+		c.SetValue(value)
+	})
 	return e
 }
 
 func (e *colorChannelEntry) MinSize() fyne.Size {
 	// Ensure space for 3 digits
-	min := fyne.MeasureText("000", theme.TextSize(), fyne.TextStyle{})
-	min = min.Add(fyne.NewSize(theme.Padding()*6, theme.Padding()*4))
-	return min.Max(e.Entry.MinSize())
+	minSize := fyne.MeasureText("000", theme.TextSize(), fyne.TextStyle{})
+	minSize = minSize.Add(fyne.NewSize(theme.Padding()*6, theme.Padding()*4))
+	return internal.MaxSizes(minSize, e.Entry.MinSize())
+}
+
+type userChangeEntry struct {
+	widget.Entry
+	userTyped bool
+}
+
+func newUserChangeEntry(text string) *userChangeEntry {
+	e := &userChangeEntry{}
+	e.Text = text
+	e.ExtendBaseWidget(e)
+	return e
+}
+
+func (e *userChangeEntry) setOnChanged(onChanged func(s string)) {
+	e.OnChanged = func(text string) {
+		if !e.userTyped {
+			return
+		}
+
+		e.userTyped = false
+
+		if onChanged != nil {
+			onChanged(text)
+		}
+	}
+	e.ExtendBaseWidget(e)
+}
+
+func (e *userChangeEntry) TypedRune(r rune) {
+	e.userTyped = true
+	e.Entry.TypedRune(r)
+}
+
+func (e *userChangeEntry) TypedKey(ev *fyne.KeyEvent) {
+	e.userTyped = true
+	e.Entry.TypedKey(ev)
 }

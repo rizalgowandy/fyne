@@ -1,25 +1,47 @@
 package widget
 
 import (
-	"image/color"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/internal/cache"
 	"fyne.io/fyne/v2/theme"
+)
+
+var (
+	_ fyne.Widget     = (*Label)(nil)
+	_ fyne.Accessible = (*Label)(nil)
 )
 
 // Label widget is a label component with appropriate padding and layout.
 type Label struct {
 	BaseWidget
 	Text      string
-	Alignment fyne.TextAlign // The alignment of the Text
-	Wrapping  fyne.TextWrap  // The wrapping of the Text
+	Alignment fyne.TextAlign // The alignment of the text
+	Wrapping  fyne.TextWrap  // The wrapping of the text
 	TextStyle fyne.TextStyle // The style of the label text
-	provider  *textProvider
 
-	textSource   binding.String
-	textListener binding.DataListener
+	// The truncation mode of the text
+	//
+	// Since: 2.4
+	Truncation fyne.TextTruncation
+	// Importance informs how the label should be styled, i.e. warning or disabled
+	//
+	// Since: 2.4
+	Importance Importance
+
+	// The theme size name for the text size of the label
+	//
+	// Since: 2.6
+	SizeName fyne.ThemeSizeName
+
+	// If set to true, Selectable indicates that this label should support select interaction
+	// to allow the text to be copied.
+	//
+	// Since: 2.6
+	Selectable bool
+
+	provider  *RichText
+	binder    basicBinder
+	selection *focusSelectable
 }
 
 // NewLabel creates a new label widget with the set text content
@@ -27,7 +49,7 @@ func NewLabel(text string) *Label {
 	return NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{})
 }
 
-// NewLabelWithData returns an Label widget connected to the specified data source.
+// NewLabelWithData returns a Label widget connected to the specified data source.
 //
 // Since: 2.0
 func NewLabelWithData(data binding.String) *Label {
@@ -45,7 +67,22 @@ func NewLabelWithStyle(text string, alignment fyne.TextAlign, style fyne.TextSty
 		TextStyle: style,
 	}
 
+	l.ExtendBaseWidget(l)
 	return l
+}
+
+// AccessibilityLabel for a label is just the text for that label.
+//
+// Since: 2.8
+func (l *Label) AccessibilityLabel() string {
+	return l.Text
+}
+
+// AccessibilityRole for a label is fyne.AccessibleRoleText.
+//
+// Since: 2.8
+func (*Label) AccessibilityRole() fyne.AccessibleRole {
+	return fyne.AccessibleRoleText
 }
 
 // Bind connects the specified data source to this Label.
@@ -53,55 +90,77 @@ func NewLabelWithStyle(text string, alignment fyne.TextAlign, style fyne.TextSty
 //
 // Since: 2.0
 func (l *Label) Bind(data binding.String) {
-	l.Unbind()
-	l.textSource = data
-	l.textListener = binding.NewDataListener(func() {
-		val, err := l.textSource.Get()
-		if err != nil {
-			fyne.LogError("Error getting current data value", err)
-			return
-		}
-
-		l.Text = val
-		if cache.IsRendered(l) {
-			l.Refresh()
-		}
-	})
-	data.AddListener(l.textListener)
+	l.binder.SetCallback(l.updateFromData) // This could only be done once, maybe in ExtendBaseWidget?
+	l.binder.Bind(data)
 }
 
-// Refresh checks if the text content should be updated then refreshes the graphical context
+// CreateRenderer is a private method to Fyne which links this widget to its renderer
+func (l *Label) CreateRenderer() fyne.WidgetRenderer {
+	l.provider = NewRichTextWithText(l.Text)
+	l.ExtendBaseWidget(l)
+	l.syncSegments()
+
+	l.selection = &focusSelectable{}
+	l.selection.ExtendBaseWidget(l.selection)
+	l.selection.focus = l.selection
+	l.selection.style = l.TextStyle
+	l.selection.theme = l.Theme()
+	l.selection.provider = l.provider
+
+	return &labelRenderer{l: l, objects: []fyne.CanvasObject{l.selection, l.provider}}
+}
+
+// MinSize returns the size that this label should not shrink below.
+func (l *Label) MinSize() fyne.Size {
+	l.ExtendBaseWidget(l)
+	return l.BaseWidget.MinSize()
+}
+
+// Refresh triggers a redraw of the label.
 func (l *Label) Refresh() {
 	if l.provider == nil { // not created until visible
 		return
 	}
-
-	if l.Text != string(l.provider.buffer) {
-		l.provider.setText(l.Text)
-	} else {
-		l.provider.updateRowBounds() // if truncate/wrap has changed
-	}
-
+	l.syncSegments()
+	l.provider.Refresh()
 	l.BaseWidget.Refresh()
 }
 
-// Resize sets a new size for the label.
-// Note this should not be used if the widget is being managed by a Layout within a Container.
-func (l *Label) Resize(size fyne.Size) {
-	l.BaseWidget.Resize(size)
-	if l.provider == nil { // not created until visible
+// SelectedText returns the text currently selected in this Label.
+// If the label is not Selectable it will return an empty string.
+// If there is no selection it will return the empty string.
+//
+// Since: 2.6
+func (l *Label) SelectedText() string {
+	if !l.Selectable || l.selection == nil {
+		return ""
+	}
+
+	return l.selection.SelectedText()
+}
+
+// ClearSelection removes any active text selection in this Label.
+// It has no effect if the Label is not Selectable or nothing is currently selected.
+//
+// Since: 2.9
+func (l *Label) ClearSelection() {
+	if !l.Selectable || l.selection == nil || !l.selection.selecting {
 		return
 	}
-	l.provider.Resize(size)
+	l.selection.selecting = false
+	l.Refresh()
 }
 
 // SetText sets the text of the label
 func (l *Label) SetText(text string) {
 	l.Text = text
-	if l.provider == nil { // not created until visible
-		return
+	if l.Selectable && l.selection != nil {
+		l.selection.cursorRow = 0
+		l.selection.cursorColumn = 0
+		l.selection.selectRow = 0
+		l.selection.selectColumn = 0
 	}
-	l.provider.setText(text) // calls refresh
+	l.Refresh()
 }
 
 // Unbind disconnects any configured data source from this Label.
@@ -109,59 +168,113 @@ func (l *Label) SetText(text string) {
 //
 // Since: 2.0
 func (l *Label) Unbind() {
-	if l.textSource == nil || l.textListener == nil {
+	l.binder.Unbind()
+}
+
+func (l *Label) syncSegments() {
+	var color fyne.ThemeColorName
+	switch l.Importance {
+	case LowImportance:
+		color = theme.ColorNameDisabled
+	case HighImportance:
+		color = theme.ColorNamePrimary
+	case DangerImportance:
+		color = theme.ColorNameError
+	case WarningImportance:
+		color = theme.ColorNameWarning
+	case SuccessImportance:
+		color = theme.ColorNameSuccess
+	default:
+		color = theme.ColorNameForeground
+	}
+
+	sizeName := l.SizeName
+	if sizeName == "" {
+		sizeName = theme.SizeNameText
+	}
+	l.provider.Wrapping = l.Wrapping
+	l.provider.Truncation = l.Truncation
+	l.provider.Segments[0].(*TextSegment).Style = RichTextStyle{
+		Alignment: l.Alignment,
+		ColorName: color,
+		Inline:    true,
+		TextStyle: l.TextStyle,
+		SizeName:  sizeName,
+	}
+	l.provider.Segments[0].(*TextSegment).Text = l.Text
+}
+
+func (l *Label) updateFromData(data binding.DataItem) {
+	if data == nil {
+		return
+	}
+	textSource, ok := data.(binding.String)
+	if !ok {
+		return
+	}
+	val, err := textSource.Get()
+	if err != nil {
+		fyne.LogError("Error getting current data value", err)
+		return
+	}
+	l.SetText(val)
+}
+
+type labelRenderer struct {
+	l       *Label
+	objects []fyne.CanvasObject
+}
+
+func (*labelRenderer) Destroy() {
+}
+
+func (r *labelRenderer) Layout(s fyne.Size) {
+	r.l.selection.Resize(s)
+	r.l.provider.Resize(s)
+}
+
+func (r *labelRenderer) MinSize() fyne.Size {
+	return r.l.provider.MinSize()
+}
+
+func (r *labelRenderer) Objects() []fyne.CanvasObject {
+	if !r.l.Selectable {
+		return r.objects[1:] // only the RichText provider; exclude selection
+	}
+
+	return r.objects
+}
+
+func (r *labelRenderer) Refresh() {
+	r.l.provider.Refresh()
+
+	sel := r.l.selection
+	if !r.l.Selectable || sel == nil {
 		return
 	}
 
-	l.textSource.RemoveListener(l.textListener)
-	l.textListener = nil
-	l.textSource = nil
+	sel.sizeName = r.l.SizeName
+	sel.style = r.l.TextStyle
+	sel.theme = r.l.Theme()
+	sel.Refresh()
 }
 
-// textAlign tells the rendering textProvider our alignment
-func (l *Label) textAlign() fyne.TextAlign {
-	return l.Alignment
+type focusSelectable struct {
+	selectable
 }
 
-// textWrap tells the rendering textProvider our wrapping
-func (l *Label) textWrap() fyne.TextWrap {
-	return l.Wrapping
+func (f *focusSelectable) FocusGained() {
+	f.focused = true
+	f.Refresh()
 }
 
-// textStyle tells the rendering textProvider our style
-func (l *Label) textStyle() fyne.TextStyle {
-	return l.TextStyle
+func (f *focusSelectable) FocusLost() {
+	f.focused = false
+	f.Refresh()
 }
 
-// textColor tells the rendering textProvider our color
-func (l *Label) textColor() color.Color {
-	return theme.ForegroundColor()
+func (*focusSelectable) TypedKey(*fyne.KeyEvent) {
 }
 
-// concealed tells the rendering textProvider if we are a concealed field
-func (l *Label) concealed() bool {
-	return false
-}
-
-// object returns the root object of the widget so it can be referenced
-func (l *Label) object() fyne.Widget {
-	return l.super()
-}
-
-// CreateRenderer is a private method to Fyne which links this widget to its renderer
-func (l *Label) CreateRenderer() fyne.WidgetRenderer {
-	l.ExtendBaseWidget(l)
-	l.provider = newTextProvider(l.Text, l)
-	l.provider.extraPad = fyne.NewSize(0, theme.Padding())
-	l.provider.size = l.size
-	return l.provider.CreateRenderer()
-}
-
-// MinSize returns the size that this widget should not shrink below
-func (l *Label) MinSize() fyne.Size {
-	l.ExtendBaseWidget(l)
-	if p := l.provider; p != nil && l.Text != string(p.buffer) {
-		p.setText(l.Text)
-	}
-	return l.BaseWidget.MinSize()
+func (*focusSelectable) TypedRune(rune) {
 }

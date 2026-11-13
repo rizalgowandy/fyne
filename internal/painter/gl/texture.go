@@ -1,0 +1,339 @@
+package gl
+
+import (
+	"errors"
+	"fmt"
+	"image"
+	"image/draw"
+	"math"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal/cache"
+	paint "fyne.io/fyne/v2/internal/painter"
+	"fyne.io/fyne/v2/internal/painter/geom"
+	"fyne.io/fyne/v2/theme"
+)
+
+const floatEqualityThreshold = 1e-9
+
+var noTexture = Texture(cache.NoTexture)
+
+type clippedTextTexture struct {
+	texture       Texture
+	offset        int
+	width, height int
+	scale         float32
+}
+
+func (t clippedTextTexture) covers(offset, width, height int, scale float32) bool {
+	return t.height == height && t.scale == scale &&
+		t.offset <= offset && t.offset+t.width >= offset+width
+}
+
+func textTextureWindow(visibleOffset, visibleWidth, fullWidth, maxWidth int) (offset, width int) {
+	width = maxWidth
+	if fullWidth < width {
+		width = fullWidth
+	}
+	if visibleWidth > width {
+		visibleWidth = width
+	}
+	offset = visibleOffset - (width-visibleWidth)/2
+	if offset < 0 {
+		offset = 0
+	}
+	if maxOffset := fullWidth - width; offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset, width
+}
+
+// Texture represents an uploaded GL texture
+type Texture cache.TextureType
+
+func (p *painter) freeTexture(obj fyne.CanvasObject) {
+	if img, ok := obj.(*canvas.Image); ok {
+		delete(p.imageSizes, img)
+	}
+	texture, ok := cache.GetTexture(obj)
+	if !ok {
+		return
+	}
+
+	if cache.IsValid(texture) {
+		p.ctx.DeleteTexture(Texture(texture))
+		p.logError()
+	}
+	cache.DeleteTexture(obj)
+}
+
+func (p *painter) getTexture(object fyne.CanvasObject, creator func(canvasObject fyne.CanvasObject) Texture) (Texture, error) {
+	if t, ok := object.(*canvas.Text); ok {
+		custom, scope := "", ""
+		if t.FontSource != nil {
+			custom = t.FontSource.Name()
+		} else {
+			scope = cache.WidgetScopeID(t)
+		}
+		ent := cache.FontCacheEntry{Color: t.Color, Canvas: p.canvas}
+		ent.Text = t.Text
+		ent.Size = t.TextSize
+		ent.Style = t.TextStyle
+		ent.Source = custom
+		ent.Scope = scope
+
+		texture, ok := cache.GetTextTexture(ent)
+
+		if !ok {
+			tex := creator(object)
+			if glDebug {
+				count(&p.stats.textures, object, 1)
+			}
+			texture = cache.TextureType(tex)
+			cache.SetTextTexture(ent, texture, p.canvas, func() {
+				p.ctx.DeleteTexture(tex)
+				p.logError()
+			})
+		}
+
+		return Texture(texture), nil
+	}
+
+	texture, ok := cache.GetTexture(object)
+
+	if !ok {
+		texture = cache.TextureType(creator(object))
+		if glDebug {
+			count(&p.stats.textures, object, 1)
+		}
+		cache.SetTexture(object, texture, p.canvas)
+	}
+	if !cache.IsValid(texture) {
+		return noTexture, errors.New("no texture available")
+	}
+	return Texture(texture), nil
+}
+
+func (p *painter) imgToTexture(img image.Image, textureFilter canvas.ImageScale) Texture {
+	switch i := img.(type) {
+	case *image.Uniform:
+		texture := p.newTexture(textureFilter)
+		r, g, b, a := i.RGBA()
+		r8, g8, b8, a8 := uint8((r>>8)&0xff), uint8((g>>8)&0xff), uint8((b>>8)&0xff), uint8((a>>8)&0xff)
+		data := []uint8{r8, g8, b8, a8}
+		p.ctx.TexImage2D(
+			texture2D,
+			0,
+			1,
+			1,
+			colorFormatRGBA,
+			unsignedByte,
+			data,
+		)
+		p.logError()
+		return texture
+	case *image.RGBA:
+		if len(i.Pix) == 0 { // image is empty
+			return noTexture
+		}
+
+		texture := p.newTexture(textureFilter)
+		p.ctx.TexImage2D(
+			texture2D,
+			0,
+			i.Rect.Size().X,
+			i.Rect.Size().Y,
+			colorFormatRGBA,
+			unsignedByte,
+			i.Pix,
+		)
+		p.logError()
+		return texture
+	default:
+		rgba := image.NewRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+		draw.Draw(rgba, rgba.Rect, img, img.Bounds().Min, draw.Over)
+		return p.imgToTexture(rgba, textureFilter)
+	}
+}
+
+func (p *painter) newGlImageTexture(obj fyne.CanvasObject) Texture {
+	img, _ := obj.(*canvas.Image)
+
+	width := p.textureScale(img.Size().Width)
+	height := p.textureScale(img.Size().Height)
+
+	tex := paint.PaintImage(img, p.canvas, int(width), int(height))
+	if tex == nil {
+		return noTexture
+	}
+
+	if p.imageSizes == nil {
+		p.imageSizes = make(map[*canvas.Image]image.Point)
+	}
+	p.imageSizes[img] = tex.Bounds().Size()
+	return p.imgToTexture(tex, img.ScaleMode)
+}
+
+// updateImageTexture uploads the pixels in the region dirty of img into the
+// texture it already has. It returns false if that texture cannot be updated in
+// part, as it was not uploaded from pixels laid out like those of img.Image.
+func (p *painter) updateImageTexture(img *canvas.Image, dirty image.Rectangle) bool {
+	texture, _ := cache.GetTexture(img)
+	src := img.Image
+	if !cache.IsValid(texture) || src == nil {
+		return false
+	}
+	bounds := src.Bounds()
+	if _, uniform := src.(*image.Uniform); uniform || bounds.Size() != p.imageSizes[img] {
+		return false
+	}
+	dirty = dirty.Intersect(bounds)
+	if dirty.Empty() {
+		return true
+	}
+
+	var pix []uint8
+	if rgba, ok := src.(*image.RGBA); ok && dirty.Dx() == bounds.Dx() && rgba.Stride == 4*bounds.Dx() {
+		pix = rgba.Pix[rgba.PixOffset(dirty.Min.X, dirty.Min.Y):][:dirty.Dy()*rgba.Stride] // whole rows need no copy
+	} else {
+		part := &image.RGBA{Rect: dirty, Stride: 4 * dirty.Dx()}
+		if size := part.Stride * dirty.Dy(); cap(p.pixels) < size {
+			p.pixels = make([]uint8, size)
+		}
+		part.Pix = p.pixels[:part.Stride*dirty.Dy()]
+		draw.Draw(part, dirty, src, dirty.Min, draw.Src)
+		pix = part.Pix
+	}
+
+	p.ctx.ActiveTexture(texture0)
+	p.ctx.BindTexture(texture2D, Texture(texture))
+	p.ctx.TexSubImage2D(texture2D, 0, dirty.Min.X-bounds.Min.X, dirty.Min.Y-bounds.Min.Y, dirty.Dx(), dirty.Dy(),
+		colorFormatRGBA, unsignedByte, pix)
+	p.logError()
+	return true
+}
+
+func (p *painter) newGlLinearGradientTexture(obj fyne.CanvasObject) Texture {
+	gradient, _ := obj.(*canvas.LinearGradient)
+
+	w := gradient.Size().Width
+	h := gradient.Size().Height
+	switch a := gradient.Angle; {
+	case almostEqual(a, geom.AngleQuarter), almostEqual(a, geom.AngleThreeQuarter):
+		h = 1
+	case almostEqual(a, geom.AngleNone), almostEqual(a, geom.AngleHalf):
+		w = 1
+	}
+	width := p.textureScale(w)
+	height := p.textureScale(h)
+
+	return p.imgToTexture(gradient.Generate(int(width), int(height)), canvas.ImageScaleSmooth)
+}
+
+func (p *painter) newGlRadialGradientTexture(obj fyne.CanvasObject) Texture {
+	gradient, _ := obj.(*canvas.RadialGradient)
+
+	width := p.textureScale(gradient.Size().Width)
+	height := p.textureScale(gradient.Size().Height)
+
+	return p.imgToTexture(gradient.Generate(int(width), int(height)), canvas.ImageScaleSmooth)
+}
+
+func (p *painter) newGlRasterTexture(obj fyne.CanvasObject) Texture {
+	rast, _ := obj.(*canvas.Raster)
+
+	width := p.textureScale(rast.Size().Width)
+	height := p.textureScale(rast.Size().Height)
+
+	return p.imgToTexture(rast.Generator(int(width), int(height)), rast.ScaleMode)
+}
+
+func (p *painter) newGlTextTexture(obj fyne.CanvasObject) Texture {
+	text, _ := obj.(*canvas.Text)
+	color := text.Color
+	if color == nil {
+		color = theme.Color(theme.ColorNameForeground)
+	}
+
+	bounds := text.MinSize()
+	width := int(math.Ceil(float64(p.textureScale(bounds.Width) + paint.VectorPad(text)))) // potentially italic overspill
+	height := int(math.Ceil(float64(p.textureScale(bounds.Height) + paint.TextVectorPad))) // space below for descenders / underline
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	face := paint.CachedFontFace(text.TextStyle, text.FontSource, text)
+	paint.DrawString(img, text.Text, color, face.Fonts, text.TextSize, p.pixScale, text.TextStyle)
+	return p.imgToTexture(img, canvas.ImageScaleSmooth)
+}
+
+func (p *painter) clippedTextTexture(text *canvas.Text, visibleOffset, visibleWidth, fullWidth, height int) clippedTextTexture {
+	if cached, ok := p.clippedTextTextures[text]; ok {
+		if cached.covers(visibleOffset, visibleWidth, height, p.pixScale) {
+			cache.GetTexture(text) // Keep the expiry marker alive while this clipped texture is still used.
+			return cached
+		}
+		p.ctx.DeleteTexture(cached.texture)
+		p.logError()
+	}
+
+	offset, width := textTextureWindow(visibleOffset, visibleWidth, fullWidth, p.maxTextureSize)
+
+	color := text.Color
+	if color == nil {
+		color = theme.Color(theme.ColorNameForeground)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	face := paint.CachedFontFace(text.TextStyle, text.FontSource, text)
+	paint.DrawStringOffset(img, text.Text, color, face.Fonts, text.TextSize, p.pixScale, text.TextStyle, offset)
+	texture := p.imgToTexture(img, canvas.ImageScaleSmooth)
+
+	if p.clippedTextTextures == nil {
+		p.clippedTextTextures = make(map[*canvas.Text]clippedTextTexture)
+	}
+	cached := clippedTextTexture{texture: texture, offset: offset, width: width, height: height, scale: p.pixScale}
+	p.clippedTextTextures[text] = cached
+	cache.SetTexture(text, cache.NoTexture, p.canvas)
+	return cached
+}
+
+func (p *painter) freeClippedTextTexture(text *canvas.Text) {
+	cached, ok := p.clippedTextTextures[text]
+	if !ok {
+		return
+	}
+	p.ctx.DeleteTexture(cached.texture)
+	p.logError()
+	delete(p.clippedTextTextures, text)
+}
+
+func (p *painter) newTexture(textureFilter canvas.ImageScale) Texture {
+	if int(textureFilter) >= len(textureFilterToGL) {
+		fyne.LogError(fmt.Sprintf("Invalid canvas.ImageScale value (%d), using canvas.ImageScaleSmooth as default value", textureFilter), nil)
+		textureFilter = canvas.ImageScaleSmooth
+	}
+
+	texture := p.ctx.CreateTexture()
+	p.logError()
+	p.ctx.ActiveTexture(texture0)
+	p.ctx.BindTexture(texture2D, texture)
+	p.logError()
+	p.ctx.TexParameteri(texture2D, textureMinFilter, textureFilterToGL[textureFilter])
+	p.ctx.TexParameteri(texture2D, textureMagFilter, textureFilterToGL[textureFilter])
+	p.ctx.TexParameteri(texture2D, textureWrapS, clampToEdge)
+	p.ctx.TexParameteri(texture2D, textureWrapT, clampToEdge)
+	p.logError()
+
+	return texture
+}
+
+func (p *painter) textureScale(v float32) float32 {
+	if p.pixScale == 1.0 {
+		return float32(math.Round(float64(v)))
+	}
+
+	return float32(math.Round(float64(v * p.pixScale)))
+}
+
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) < floatEqualityThreshold
+}

@@ -13,14 +13,58 @@ func TestNewFileURI(t *testing.T) {
 
 func TestParseURI(t *testing.T) {
 	uri, err := ParseURI("file:///tmp/foo.txt")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "file:///tmp/foo.txt", uri.String())
 
 	uri, err = ParseURI("file:/tmp/foo.txt")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "file:///tmp/foo.txt", uri.String())
 
 	uri, err = ParseURI("file://C:/tmp/foo.txt")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "file://C:/tmp/foo.txt", uri.String())
+
+	ipv6url := "http://[2001:db8:4006:812::200e]:8080/path/page.html"
+	uri, err = ParseURI(ipv6url)
+	assert.NoError(t, err)
+	assert.Equal(t, ipv6url, uri.String())
+
+	ipv6url = "http://[2001:db8:4006:812::200e]/path/page.html"
+	uri, err = ParseURI(ipv6url)
+	assert.NoError(t, err)
+	assert.Equal(t, ipv6url, uri.String())
+}
+
+func TestParseInvalidURI(t *testing.T) {
+	uri, err := ParseURI("/tmp/foo.txt")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("file")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("file:")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("file://")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI(":foo")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("scheme://0[]/invalid")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("scheme://aaaaaaaaaa22222222223333333333444444444455555555556666666666bbbb/too/long")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
+
+	uri, err = ParseURI("scheme://1..2/wrong")
+	assert.Error(t, err)
+	assert.Nil(t, uri)
 }

@@ -1,61 +1,53 @@
-// Package widget defines the UI widgets within the Fyne toolkit
+// Package widget defines the UI widgets within the Fyne toolkit.
 package widget // import "fyne.io/fyne/v2/widget"
 
 import (
-	"image/color"
-	"sync"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/internal/cache"
+	internalWidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/theme"
 )
 
 // BaseWidget provides a helper that handles basic widget behaviours.
 type BaseWidget struct {
+	noCopy noCopy // so `go vet` can complain if a widget is passed by value (copied)
+
 	size     fyne.Size
 	position fyne.Position
 	Hidden   bool
 
-	impl         fyne.Widget
-	propertyLock sync.RWMutex
+	impl       fyne.Widget
+	themeCache fyne.Theme
+	minSize    fyne.Size
+	minSizeGen uint64
 }
 
 // ExtendBaseWidget is used by an extending widget to make use of BaseWidget functionality.
 func (w *BaseWidget) ExtendBaseWidget(wid fyne.Widget) {
-	impl := w.getImpl()
-	if impl != nil {
+	if w.super() != nil {
 		return
 	}
 
-	w.propertyLock.Lock()
-	defer w.propertyLock.Unlock()
 	w.impl = wid
 }
 
 // Size gets the current size of this widget.
 func (w *BaseWidget) Size() fyne.Size {
-	w.propertyLock.RLock()
-	defer w.propertyLock.RUnlock()
-
 	return w.size
 }
 
 // Resize sets a new size for a widget.
 // Note this should not be used if the widget is being managed by a Layout within a Container.
 func (w *BaseWidget) Resize(size fyne.Size) {
-	w.propertyLock.RLock()
-	baseSize := w.size
-	impl := w.impl
-	w.propertyLock.RUnlock()
-	if baseSize == size {
+	if size == w.Size() {
 		return
 	}
 
-	w.propertyLock.Lock()
 	w.size = size
-	w.propertyLock.Unlock()
+	w.minSizeGen = 0 // min size can depend on size, like wrapped text
 
+	impl := w.super()
 	if impl == nil {
 		return
 	}
@@ -64,39 +56,41 @@ func (w *BaseWidget) Resize(size fyne.Size) {
 
 // Position gets the current position of this widget, relative to its parent.
 func (w *BaseWidget) Position() fyne.Position {
-	w.propertyLock.RLock()
-	defer w.propertyLock.RUnlock()
-
 	return w.position
 }
 
 // Move the widget to a new position, relative to its parent.
 // Note this should not be used if the widget is being managed by a Layout within a Container.
 func (w *BaseWidget) Move(pos fyne.Position) {
-	w.propertyLock.Lock()
-	defer w.propertyLock.Unlock()
+	if w.Position() == pos {
+		return
+	}
 
 	w.position = pos
+	internalWidget.Repaint(w.super())
 }
 
 // MinSize for the widget - it should never be resized below this value.
 func (w *BaseWidget) MinSize() fyne.Size {
-	impl := w.getImpl()
+	gen := cache.MinSizeGeneration()
+	if gen != 0 && w.minSizeGen == gen {
+		return w.minSize
+	}
+
+	impl := w.super()
 
 	r := cache.Renderer(impl)
 	if r == nil {
-		return fyne.NewSize(0, 0)
+		return fyne.Size{}
 	}
 
-	return r.MinSize()
+	w.minSize, w.minSizeGen = r.MinSize(), gen
+	return w.minSize
 }
 
 // Visible returns whether or not this widget should be visible.
 // Note that this may not mean it is currently visible if a parent has been hidden.
 func (w *BaseWidget) Visible() bool {
-	w.propertyLock.RLock()
-	defer w.propertyLock.RUnlock()
-
 	return !w.Hidden
 }
 
@@ -106,9 +100,13 @@ func (w *BaseWidget) Show() {
 		return
 	}
 
-	w.setFieldsAndRefresh(func() {
-		w.Hidden = false
-	})
+	w.Hidden = false
+
+	impl := w.super()
+	if impl == nil {
+		return
+	}
+	impl.Refresh()
 }
 
 // Hide this widget so it is no longer visible
@@ -117,66 +115,52 @@ func (w *BaseWidget) Hide() {
 		return
 	}
 
-	w.propertyLock.Lock()
 	w.Hidden = true
-	w.propertyLock.Unlock()
 
-	impl := w.getImpl()
+	impl := w.super()
 	if impl == nil {
 		return
 	}
 	canvas.Refresh(impl)
 }
 
-// Refresh causes this widget to be redrawn in it's current state
+// Refresh causes this widget to be redrawn in its current state
 func (w *BaseWidget) Refresh() {
-	impl := w.getImpl()
+	impl := w.super()
 	if impl == nil {
 		return
 	}
 
-	render := cache.Renderer(impl)
-	render.Refresh()
+	w.themeCache = nil
+	w.minSizeGen = 0
+
+	cache.Renderer(impl).Refresh()
 }
 
-func (w *BaseWidget) getImpl() fyne.Widget {
-	w.propertyLock.RLock()
-	impl := w.impl
-	w.propertyLock.RUnlock()
-
-	if impl == nil {
-		return nil
+// Theme returns a cached Theme instance for this widget (or its extending widget).
+// This will be the app theme in most cases, or a widget specific theme if it is inside a ThemeOverride container.
+//
+// Since: 2.5
+func (w *BaseWidget) Theme() fyne.Theme {
+	cached := w.themeCache
+	if cached != nil {
+		return cached
 	}
 
-	return impl
-}
-
-// setFieldsAndRefresh helps to make changes to a widget that should be followed by a refresh.
-// This method is a guaranteed thread-safe way of directly manipulating widget fields.
-func (w *BaseWidget) setFieldsAndRefresh(f func()) {
-	w.propertyLock.Lock()
-	f()
-	w.propertyLock.Unlock()
-
-	impl := w.getImpl()
-	if impl == nil {
-		w.Refresh()
-	} else {
-		impl.Refresh()
+	cached = cache.WidgetTheme(w.super())
+	// don't cache the default as it may change
+	if cached == nil {
+		return theme.Current()
 	}
+
+	w.themeCache = cached
+	return cached
 }
 
 // super will return the actual object that this represents.
-// If extended then this is the extending widget, otherwise it is self.
+// If extended then this is the extending widget, otherwise it is nil.
 func (w *BaseWidget) super() fyne.Widget {
-	impl := w.getImpl()
-
-	if impl == nil {
-		var x interface{} = w
-		return x.(fyne.Widget)
-	}
-
-	return impl
+	return w.impl
 }
 
 // DisableableWidget describes an extension to BaseWidget which can be disabled.
@@ -189,57 +173,64 @@ type DisableableWidget struct {
 
 // Enable this widget, updating any style or features appropriately.
 func (w *DisableableWidget) Enable() {
-	w.setFieldsAndRefresh(func() {
-		if !w.disabled {
-			return
-		}
+	if !w.Disabled() {
+		return // Enabled already
+	}
 
-		w.disabled = false
-	})
+	w.disabled = false
+
+	impl := w.super()
+	if impl == nil {
+		return
+	}
+	impl.Refresh()
 }
 
 // Disable this widget so that it cannot be interacted with, updating any style appropriately.
 func (w *DisableableWidget) Disable() {
-	w.setFieldsAndRefresh(func() {
-		if w.disabled {
-			return
-		}
+	if w.Disabled() {
+		return // Disabled already
+	}
 
-		w.disabled = true
-	})
+	w.disabled = true
+
+	impl := w.super()
+	if impl == nil {
+		return
+	}
+	impl.Refresh()
 }
 
 // Disabled returns true if this widget is currently disabled or false if it can currently be interacted with.
 func (w *DisableableWidget) Disabled() bool {
-	w.propertyLock.RLock()
-	defer w.propertyLock.RUnlock()
-
 	return w.disabled
 }
 
-type simpleRenderer struct {
-	content *fyne.Container
+// NewSimpleRenderer creates a new SimpleRenderer to render a widget using a
+// single fyne.CanvasObject.
+//
+// Since: 2.1
+func NewSimpleRenderer(object fyne.CanvasObject) fyne.WidgetRenderer {
+	return internalWidget.NewSimpleRenderer(object)
 }
 
-func (s *simpleRenderer) BackgroundColor() color.Color {
-	return theme.BackgroundColor()
-}
+// Orientation controls the horizontal/vertical layout of a widget
+type Orientation int
 
-func (s *simpleRenderer) Destroy() {
-}
+// Orientation constants to control widget layout
+const (
+	Horizontal Orientation = 0
+	Vertical   Orientation = 1
 
-func (s *simpleRenderer) Layout(size fyne.Size) {
-	s.content.Resize(size)
-}
+	// Adaptive will switch between horizontal and vertical layouts according to device orientation.
+	// This orientation is not always supported and interpretation can vary per-widget.
+	//
+	// Since: 2.5
+	Adaptive Orientation = 2
+)
 
-func (s *simpleRenderer) MinSize() fyne.Size {
-	return s.content.MinSize()
-}
+type noCopy struct{}
 
-func (s *simpleRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{s.content}
-}
+func (*noCopy) Lock() {}
 
-func (s *simpleRenderer) Refresh() {
-	s.content.Refresh()
-}
+func (*noCopy) Unlock() {}

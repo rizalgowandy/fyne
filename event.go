@@ -1,12 +1,26 @@
 package fyne
 
+// HardwareKey contains information associated with physical key events
+// Most applications should use [KeyName] for cross-platform compatibility.
+type HardwareKey struct {
+	// ScanCode represents a hardware ID for (normally desktop) keyboard events.
+	ScanCode int
+}
+
 // KeyEvent describes a keyboard input event.
 type KeyEvent struct {
+	// Name describes the keyboard event that is consistent across platforms.
 	Name KeyName
+	// Physical is a platform specific field that reports the hardware information of physical keyboard events.
+	Physical HardwareKey
+	// Repeat indicates that this event is a key repeat, i.e. the key was held down long enough to trigger repeated events.
+	//
+	// Since: 2.9
+	Repeat bool
 }
 
 // PointEvent describes a pointer input event. The position is relative to the
-// top-left of the CanvasObject this is triggered on.
+// top-left of the [CanvasObject] this is triggered on.
 type PointEvent struct {
 	AbsolutePosition Position // The absolute position of the event
 	Position         Position // The relative position of the event

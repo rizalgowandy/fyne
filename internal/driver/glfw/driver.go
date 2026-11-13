@@ -3,49 +3,54 @@
 package glfw
 
 import (
+	"bytes"
+	"image"
+	"image/draw"
+	_ "image/jpeg" // allow to use JPEGs as icon source
+	"image/png"
+	"os"
 	"runtime"
-	"strconv"
-	"strings"
-	"sync"
+
+	"github.com/fyne-io/image/ico"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/internal/animation"
+	intapp "fyne.io/fyne/v2/internal/app"
+	"fyne.io/fyne/v2/internal/async"
 	"fyne.io/fyne/v2/internal/driver"
+	"fyne.io/fyne/v2/internal/driver/common"
+	"fyne.io/fyne/v2/internal/goos"
 	"fyne.io/fyne/v2/internal/painter"
 	intRepo "fyne.io/fyne/v2/internal/repository"
 	"fyne.io/fyne/v2/storage/repository"
 )
 
-const mainGoroutineID = 1
+var curWindow *window
 
-var (
-	canvasMutex sync.RWMutex
-	canvases    = make(map[fyne.CanvasObject]fyne.Canvas)
-	isWayland   = false
-)
+// NewGLDriver sets up a new Driver instance implemented using the GLFW Go library and OpenGL bindings.
+func NewGLDriver() fyne.Driver {
+	repository.Register(fyne.URISchemeFile, intRepo.NewFileRepository())
+
+	return &gLDriver{
+		done: make(chan struct{}),
+	}
+}
+
+type gLDriver struct {
+	windows     []fyne.Window
+	initialized bool
+	done        chan struct{}
+
+	animation animation.Runner
+
+	currentKeyModifiers fyne.KeyModifier // desktop driver only
+
+	trayStart, trayStop func()     // shut down the system tray, if used
+	systrayMenu         *fyne.Menu // cache the menu set so we know when to refresh
+}
 
 // Declare conformity with Driver
 var _ fyne.Driver = (*gLDriver)(nil)
-
-type gLDriver struct {
-	windowLock sync.RWMutex
-	windows    []fyne.Window
-	device     *glDevice
-	done       chan interface{}
-	drawDone   chan interface{}
-
-	animation *animation.Runner
-}
-
-func (d *gLDriver) RenderedTextSize(text string, size float32, style fyne.TextStyle) fyne.Size {
-	return painter.RenderedTextSize(text, size, style)
-}
-
-func (d *gLDriver) CanvasForObject(obj fyne.CanvasObject) fyne.Canvas {
-	canvasMutex.RLock()
-	defer canvasMutex.RUnlock()
-	return canvases[obj]
-}
 
 func (d *gLDriver) AbsolutePositionForObject(co fyne.CanvasObject) fyne.Position {
 	c := d.CanvasForObject(co)
@@ -53,84 +58,185 @@ func (d *gLDriver) AbsolutePositionForObject(co fyne.CanvasObject) fyne.Position
 		return fyne.NewPos(0, 0)
 	}
 
-	glc := c.(*glCanvas)
-	return driver.AbsolutePositionForObject(co, glc.objectTrees())
+	glc, _ := c.(*glCanvas)
+	return driver.AbsolutePositionForObject(co, glc.ObjectTrees())
 }
 
-func (d *gLDriver) Device() fyne.Device {
-	if d.device == nil {
-		d.device = &glDevice{}
-	}
+func (d *gLDriver) AllWindows() []fyne.Window {
+	return d.windows
+}
 
-	return d.device
+func (*gLDriver) CanvasForObject(obj fyne.CanvasObject) fyne.Canvas {
+	return common.CanvasForObject(obj)
+}
+
+func (d *gLDriver) CreateSplashWindow() fyne.Window {
+	win := d.newWindow("", false)
+	win.SetPadded(false)
+	win.CenterOnScreen()
+	return win
+}
+
+func (*gLDriver) Device() fyne.Device {
+	return &glDevice{}
+}
+
+func (*gLDriver) DoFromGoroutine(f func(), wait bool) {
+	if wait {
+		async.EnsureNotMain(func() {
+			runOnMainWithWait(f, true)
+		})
+	} else {
+		runOnMainWithWait(f, false)
+	}
 }
 
 func (d *gLDriver) Quit() {
-	defer func() {
-		recover() // we could be called twice - no safe way to check if d.done is closed
-	}()
-	close(d.done)
+	if curWindow != nil {
+		if f := fyne.CurrentApp().Lifecycle().(*intapp.Lifecycle).OnExitedForeground(); f != nil {
+			f()
+		}
+		curWindow = nil
+		if d.trayStop != nil {
+			d.trayStop()
+		}
+	}
+
+	// Only call close once to avoid panic.
+	if running.CompareAndSwap(true, false) {
+		close(d.done)
+	}
+}
+
+func (*gLDriver) RenderedTextSize(text string, textSize float32, style fyne.TextStyle, source fyne.Resource) (size fyne.Size, baseline float32) {
+	return painter.RenderedTextSize(text, textSize, style, source)
 }
 
 func (d *gLDriver) Run() {
-	if goroutineID() != mainGoroutineID {
+	if !async.IsMainGoroutine() {
 		panic("Run() or ShowAndRun() must be called from main goroutine")
 	}
+
+	go d.catchTerm()
 	d.runGL()
+
+	// Ensure lifecycle events run to completion before the app exits
+	l, _ := fyne.CurrentApp().Lifecycle().(*intapp.Lifecycle)
+	l.WaitForEvents()
+	l.DestroyEventQueue()
 }
 
-func (d *gLDriver) addWindow(w *window) {
-	d.windowLock.Lock()
-	defer d.windowLock.Unlock()
-	d.windows = append(d.windows, w)
+func (*gLDriver) SetDisableScreenBlanking(disable bool) {
+	setDisableScreenBlank(disable)
+}
+
+func (d *gLDriver) newWindow(title string, decorate bool) fyne.Window {
+	var ret *window
+	if title == "" {
+		title = defaultTitle
+	}
+
+	d.init()
+
+	// A window starts with no mouse move outstanding: the zero value would read
+	// as one pending at (0,0), which the first click would then apply.
+	ret = &window{title: title, decorate: decorate, driver: d, mousePosUpdateProcessed: true}
+	ret.frame = newPresentGate(ret)
+	ret.canvas = newCanvas()
+	ret.canvas.context = ret
+	ret.SetIcon(ret.icon)
+	d.windows = append(d.windows, ret)
+	return ret
 }
 
 // a trivial implementation of "focus previous" - return to the most recently opened, or master if set.
 // This may not do the right thing if your app has 3 or more windows open, but it was agreed this was not much
 // of an issue, and the added complexity to track focus was not needed at this time.
 func (d *gLDriver) focusPreviousWindow() {
-	d.windowLock.RLock()
-	wins := d.windows
-	d.windowLock.RUnlock()
-
-	var chosen fyne.Window
-	for _, w := range wins {
-		chosen = w
-		if w.(*window).master {
+	var chosen *window
+	for _, w := range d.windows {
+		win, _ := w.(*window)
+		if !win.visible {
+			continue
+		}
+		chosen = win
+		if win.master {
 			break
 		}
 	}
 
-	if chosen == nil || chosen.(*window).view() == nil {
+	if chosen == nil || chosen.view() == nil {
 		return
 	}
 	chosen.RequestFocus()
 }
 
-func (d *gLDriver) windowList() []fyne.Window {
-	d.windowLock.RLock()
-	defer d.windowLock.RUnlock()
-	return d.windows
+func (d *gLDriver) init() {
+	if !d.initialized {
+		d.initialized = true
+		d.initGLFW()
+	}
 }
 
-func goroutineID() int {
-	b := make([]byte, 64)
-	b = b[:runtime.Stack(b, false)]
-	// string format expects "goroutine X [running..."
-	id := strings.Split(strings.TrimSpace(string(b)), " ")[1]
+func (d *gLDriver) initFailed(msg string, err error) {
+	fyne.LogError(msg, err)
 
-	num, _ := strconv.Atoi(id)
-	return num
+	if running.Load() {
+		os.Exit(1) //revive:disable-line:deep-exit
+	}
+
+	d.Quit()
 }
 
-// NewGLDriver sets up a new Driver instance implemented using the GLFW Go library and OpenGL bindings.
-func NewGLDriver() fyne.Driver {
-	d := new(gLDriver)
-	d.done = make(chan interface{})
-	d.drawDone = make(chan interface{})
-	d.animation = &animation.Runner{}
+func convertToPNG(img image.Image) ([]byte, error) {
+	bounds := img.Bounds()
+	nrgba := image.NewNRGBA(bounds)
+	draw.Draw(nrgba, bounds, img, bounds.Min, draw.Src)
 
-	repository.Register("file", intRepo.NewFileRepository())
+	buf := &bytes.Buffer{}
+	if err := png.Encode(buf, nrgba); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
-	return d
+func toOSIcon(icon []byte) ([]byte, error) {
+	return toOSIconForRuntime(icon, runtime.GOOS)
+}
+
+// toOSIconForRuntime takes the input image bytes and converts it to an image type
+// that is suitable for the specified GOOS runtime. Which makes platform-specific icon handling testable.
+func toOSIconForRuntime(icon []byte, osName string) ([]byte, error) {
+	if osName != goos.Windows && !usesUnixSystrayIcon(osName) {
+		return icon, nil
+	}
+
+	img, format, err := image.Decode(bytes.NewReader(icon))
+	if err != nil {
+		return nil, err
+	}
+
+	// keep windows behavior: convert to ico
+	if osName == goos.Windows {
+		buf := &bytes.Buffer{}
+		if err = ico.Encode(buf, img); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	if format == "png" {
+		return icon, nil
+	}
+
+	// Unix systray expects a PNG bitmap.
+	return convertToPNG(img)
+}
+
+func usesUnixSystrayIcon(osName string) bool {
+	return osName == goos.Linux || goos.IsBSD(osName)
+}
+
+// RenderedTextSizeFor measures text in the fonts of the theme scope o is in.
+func (*gLDriver) RenderedTextSizeFor(o fyne.CanvasObject, text string, textSize float32, style fyne.TextStyle, source fyne.Resource) (fyne.Size, float32) {
+	return painter.RenderedTextSizeFor(o, text, textSize, style, source)
 }

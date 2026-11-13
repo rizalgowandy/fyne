@@ -8,11 +8,10 @@ import (
 )
 
 func Test_colorChannel_Layout(t *testing.T) {
-	test.NewApp()
-	defer test.NewApp()
+	test.NewTempApp(t)
 
-	min := 0
-	max := 100
+	minValue := 0
+	maxValue := 100
 	size := fyne.NewSize(250, 50)
 
 	for name, tt := range map[string]struct {
@@ -33,14 +32,12 @@ func Test_colorChannel_Layout(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			color := newColorChannel(tt.name, min, max, tt.value, nil)
+			color := newColorChannel(tt.name, minValue, maxValue, tt.value, nil)
 			color.Resize(size)
 
-			window := test.NewWindow(color)
+			window := test.NewTempWindow(t, color)
 
-			test.AssertImageMatches(t, "color/channel_layout_"+name+".png", window.Canvas().Capture())
-
-			window.Close()
+			test.AssertRendersToImage(t, "color/channel_layout_"+name+".png", window.Canvas())
 		})
 	}
 }

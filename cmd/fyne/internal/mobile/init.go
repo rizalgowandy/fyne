@@ -8,15 +8,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"golang.org/x/sys/execabs"
 )
 
-var (
-	goos = runtime.GOOS
-)
+var goos = runtime.GOOS
 
 func mkdir(dir string) error {
 	if buildX || buildN {
@@ -25,7 +24,7 @@ func mkdir(dir string) error {
 	if buildN {
 		return nil
 	}
-	return os.MkdirAll(dir, 0750)
+	return os.MkdirAll(dir, 0o750)
 }
 
 func removeAll(path string) error {
@@ -54,7 +53,7 @@ func resetReadOnlyFlagAll(path string) error {
 		return err
 	}
 	if !fi.IsDir() {
-		return os.Chmod(path, 0600)
+		return os.Chmod(path, 0o600)
 	}
 	fd, err := os.Open(filepath.Clean(path))
 	if err != nil {
@@ -76,14 +75,14 @@ func goEnv(name string) string {
 	if val := os.Getenv(name); val != "" {
 		return val
 	}
-	val, err := exec.Command("go", "env", name).Output()
+	val, err := execabs.Command("go", "env", name).Output()
 	if err != nil {
 		panic(err) // the Go tool was tested to work earlier
 	}
 	return strings.TrimSpace(string(val))
 }
 
-func runCmd(cmd *exec.Cmd) error {
+func runCmd(cmd *execabs.Cmd) error {
 	if buildX || buildN {
 		dir := ""
 		if cmd.Dir != "" {
@@ -108,8 +107,7 @@ func runCmd(cmd *exec.Cmd) error {
 
 	if buildWork {
 		if goos == "windows" {
-			cmd.Env = append(cmd.Env, `TEMP=`+tmpdir)
-			cmd.Env = append(cmd.Env, `TMP=`+tmpdir)
+			cmd.Env = append(cmd.Env, `TEMP=`+tmpdir, `TMP=`+tmpdir)
 		} else {
 			cmd.Env = append(cmd.Env, `TMPDIR=`+tmpdir)
 		}

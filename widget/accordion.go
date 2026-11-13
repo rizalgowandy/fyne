@@ -7,8 +7,6 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-const accordionDividerHeight = 1
-
 var _ fyne.Widget = (*Accordion)(nil)
 
 // Accordion displays a list of AccordionItems.
@@ -31,6 +29,7 @@ func NewAccordion(items ...*AccordionItem) *Accordion {
 // Append adds the given item to this Accordion.
 func (a *Accordion) Append(item *AccordionItem) {
 	a.Items = append(a.Items, item)
+
 	a.Refresh()
 }
 
@@ -40,6 +39,7 @@ func (a *Accordion) Close(index int) {
 		return
 	}
 	a.Items[index].Open = false
+
 	a.Refresh()
 }
 
@@ -48,15 +48,14 @@ func (a *Accordion) CloseAll() {
 	for _, i := range a.Items {
 		i.Open = false
 	}
+
 	a.Refresh()
 }
 
 // CreateRenderer is a private method to Fyne which links this widget to its renderer
 func (a *Accordion) CreateRenderer() fyne.WidgetRenderer {
 	a.ExtendBaseWidget(a)
-	r := &accordionRenderer{
-		container: a,
-	}
+	r := &accordionRenderer{container: a}
 	r.updateObjects()
 	return r
 }
@@ -72,6 +71,7 @@ func (a *Accordion) Open(index int) {
 	if index < 0 || index >= len(a.Items) {
 		return
 	}
+
 	for i, ai := range a.Items {
 		if i == index {
 			ai.Open = true
@@ -79,17 +79,31 @@ func (a *Accordion) Open(index int) {
 			ai.Open = false
 		}
 	}
+
 	a.Refresh()
 }
 
-// OpenAll expands all items.
+// OpenAll expands all items, note that your Accordion should have [MultiOpen] set to `true` for this to operate as
+// expected. For single-open accordions it will open only the first item.
 func (a *Accordion) OpenAll() {
 	if !a.MultiOpen {
+		a.Open(0)
 		return
 	}
+
 	for _, i := range a.Items {
 		i.Open = true
 	}
+
+	a.Refresh()
+}
+
+// Prepend adds the given item to the beginning of this Accordion.
+//
+// Since: 2.6
+func (a *Accordion) Prepend(item *AccordionItem) {
+	a.Items = append([]*AccordionItem{item}, a.Items...)
+
 	a.Refresh()
 }
 
@@ -97,8 +111,8 @@ func (a *Accordion) OpenAll() {
 func (a *Accordion) Remove(item *AccordionItem) {
 	for i, ai := range a.Items {
 		if ai == item {
-			a.RemoveIndex(i)
-			break
+			a.Items = append(a.Items[:i], a.Items[i+1:]...)
+			return
 		}
 	}
 }
@@ -109,72 +123,115 @@ func (a *Accordion) RemoveIndex(index int) {
 		return
 	}
 	a.Items = append(a.Items[:index], a.Items[index+1:]...)
+
 	a.Refresh()
 }
 
 type accordionRenderer struct {
 	widget.BaseRenderer
-	container *Accordion
-	headers   []*Button
-	dividers  []fyne.CanvasObject
+	container    *Accordion
+	headers      []*Button
+	dividers     []fyne.CanvasObject
+	minSizeCache fyne.Size
 }
 
 func (r *accordionRenderer) Layout(size fyne.Size) {
+	r.updateObjects()
+	th := r.container.Theme()
+	pad := th.Size(theme.SizeNamePadding)
+	separator := th.Size(theme.SizeNameSeparatorThickness)
+	dividerOff := (pad + separator) / 2
 	x := float32(0)
 	y := float32(0)
+	hasOpen := 0
+
+	for i, ai := range r.container.Items {
+		h := r.headers[i]
+		minHeight := h.MinSize().Height
+		y += minHeight
+
+		if ai.Open {
+			y += pad + ai.Detail.MinSize().Height
+			hasOpen++
+		}
+		if i < len(r.container.Items)-1 {
+			y += pad
+		}
+	}
+
+	extra := (size.Height - y) / float32(hasOpen)
+	if extra < 0 {
+		extra = 0
+	}
+	y = 0
 	for i, ai := range r.container.Items {
 		if i != 0 {
 			div := r.dividers[i-1]
-			div.Move(fyne.NewPos(x, y))
-			div.Resize(fyne.NewSize(size.Width, accordionDividerHeight))
-			y += accordionDividerHeight
+			if i > 0 {
+				div.Move(fyne.NewPos(x, y-dividerOff))
+			}
+			div.Resize(fyne.NewSize(size.Width, separator))
 		}
-		y += theme.Padding()
 
 		h := r.headers[i]
 		h.Move(fyne.NewPos(x, y))
-		min := h.MinSize().Height
-		h.Resize(fyne.NewSize(size.Width, min))
-		y += min
+		minHeight := h.MinSize().Height
+		h.Resize(fyne.NewSize(size.Width, minHeight))
+		y += minHeight
+
 		if ai.Open {
-			y += theme.Padding()
+			y += pad
 			d := ai.Detail
 			d.Move(fyne.NewPos(x, y))
-			min := d.MinSize().Height
-			d.Resize(fyne.NewSize(size.Width, min))
-			y += min
-		}
 
-		y += theme.Padding()
+			openSize := ai.Detail.MinSize().Height + extra
+			d.Resize(fyne.NewSize(size.Width, openSize))
+			y += openSize
+		}
+		if i < len(r.container.Items)-1 {
+			y += pad
+		}
 	}
 }
 
-func (r *accordionRenderer) MinSize() (size fyne.Size) {
+func (r *accordionRenderer) MinSize() fyne.Size {
+	if !r.minSizeCache.IsZero() {
+		return r.minSizeCache
+	}
+
+	r.updateObjects()
+	th := r.container.Theme()
+	pad := th.Size(theme.SizeNamePadding)
+	size := fyne.Size{}
+
 	for i, ai := range r.container.Items {
-		size.Height += theme.Padding() * 2
 		if i != 0 {
-			size.Height += accordionDividerHeight
+			size.Height += pad
 		}
-		min := r.headers[i].MinSize()
-		size.Width = fyne.Max(size.Width, min.Width)
-		size.Height += min.Height
-		min = ai.Detail.MinSize()
-		size.Width = fyne.Max(size.Width, min.Width)
+		minSize := r.headers[i].MinSize()
+		size.Width = max(size.Width, minSize.Width)
+		size.Height += minSize.Height
+		minSize = ai.Detail.MinSize()
+		size.Width = max(size.Width, minSize.Width)
 		if ai.Open {
-			size.Height += min.Height
-			size.Height += theme.Padding()
+			size.Height += minSize.Height
+			size.Height += pad
 		}
 	}
-	return
+
+	r.minSizeCache = size
+	return size
 }
 
 func (r *accordionRenderer) Refresh() {
+	r.minSizeCache = fyne.Size{}
 	r.updateObjects()
 	r.Layout(r.container.Size())
 	canvas.Refresh(r.container)
 }
 
 func (r *accordionRenderer) updateObjects() {
+	th := r.container.Theme()
 	is := len(r.container.Items)
 	hs := len(r.headers)
 	ds := len(r.dividers)
@@ -204,10 +261,10 @@ func (r *accordionRenderer) updateObjects() {
 			}
 		}
 		if ai.Open {
-			h.Icon = theme.MenuDropUpIcon()
+			h.Icon = th.Icon(theme.IconNameArrowDropUp)
 			ai.Detail.Show()
 		} else {
-			h.Icon = theme.MenuDropDownIcon()
+			h.Icon = th.Icon(theme.IconNameArrowDropDown)
 			ai.Detail.Hide()
 		}
 		h.Refresh()
@@ -239,10 +296,11 @@ func (r *accordionRenderer) updateObjects() {
 		r.dividers = append(r.dividers, div)
 		objects = append(objects, div)
 	}
+
 	r.SetObjects(objects)
 }
 
-// AccordionItem represents a single item in an Accordion.
+// AccordionItem represents a single item in an Acc rdion.
 type AccordionItem struct {
 	Title  string
 	Detail fyne.CanvasObject

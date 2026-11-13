@@ -1,8 +1,9 @@
 package fyne
 
 import (
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 )
 
@@ -13,6 +14,15 @@ import (
 type Resource interface {
 	Name() string
 	Content() []byte
+}
+
+// ThemedResource is a version of a resource that can be updated to match a certain theme color.
+// The [ThemeColorName] will be used to look up the color for the current theme and colorize the resource.
+//
+// Since: 2.5
+type ThemedResource interface {
+	Resource
+	ThemeColorName() ThemeColorName
 }
 
 // StaticResource is a bundled resource compiled into the application.
@@ -37,8 +47,7 @@ func (r *StaticResource) Content() []byte {
 
 // NewStaticResource returns a new static resource object with the specified
 // name and content. Creating a new static resource in memory results in
-// sharable binary data that may be serialised to the location returned by
-// CachePath().
+// sharable binary data that may be serialised to the system cache location.
 func NewStaticResource(name string, content []byte) *StaticResource {
 	return &StaticResource{
 		StaticName:    name,
@@ -46,9 +55,9 @@ func NewStaticResource(name string, content []byte) *StaticResource {
 	}
 }
 
-// LoadResourceFromPath creates a new StaticResource in memory using the contents of the specified file.
+// LoadResourceFromPath creates a new [StaticResource] in memory using the contents of the specified file.
 func LoadResourceFromPath(path string) (Resource, error) {
-	bytes, err := ioutil.ReadFile(filepath.Clean(path))
+	bytes, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
@@ -57,18 +66,62 @@ func LoadResourceFromPath(path string) (Resource, error) {
 	return NewStaticResource(name, bytes), nil
 }
 
-// LoadResourceFromURLString creates a new StaticResource in memory using the body of the specified URL.
+// LoadResourceFromURLString creates a new [StaticResource] in memory using the body of the specified URL.
 func LoadResourceFromURLString(urlStr string) (Resource, error) {
-	res, err := http.Get(urlStr)
+	res, err := http.Get(urlStr) //gosec:disable G107 -- applying security measures to the URL is the caller’s responsibility
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 
-	bytes, err := ioutil.ReadAll(res.Body)
+	bytes, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
 
 	name := filepath.Base(urlStr)
 	return NewStaticResource(name, bytes), nil
+}
+
+// CacheResourceFromURLString creates a new [StaticResource] in memory using the body of the specified URL.
+// It also adds the content to our cache so that future requests for this resource will be available locally
+// instead of downloaded from the URL.
+//
+// Since: 2.8
+func CacheResourceFromURLString(urlStr string) (Resource, error) {
+	cache := CurrentApp().Cache()
+	if read, err := cache.Read(urlStr); err == nil {
+		name := filepath.Base(urlStr)
+
+		data, err := io.ReadAll(read)
+		_ = read.Close()
+		if err != nil {
+			return nil, err
+		}
+		return NewStaticResource(name, data), nil
+	}
+
+	res, err := LoadResourceFromURLString(urlStr)
+	if err != nil {
+		return nil, err
+	}
+
+	write, err := cache.Write(urlStr)
+	if err != nil {
+		return res, err
+	}
+	defer write.Close()
+	data := res.Content()
+
+	n, err := write.Write(data)
+	for n < len(data) {
+		if err != nil {
+			return res, err
+		}
+
+		data = data[n:]
+		n, err = write.Write(data)
+	}
+
+	return res, nil
 }

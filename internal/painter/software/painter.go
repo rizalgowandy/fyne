@@ -5,13 +5,12 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/internal"
 	"fyne.io/fyne/v2/internal/driver"
+	"fyne.io/fyne/v2/internal/scale"
 )
 
 // Painter is a simple software painter that can paint a canvas in memory.
-type Painter struct {
-}
+type Painter struct{}
 
 // NewPainter creates a new Painter.
 func NewPainter() *Painter {
@@ -22,17 +21,17 @@ func NewPainter() *Painter {
 // The canvas to be drawn is passed in as a parameter and the return is an
 // image containing the result of rendering.
 func (*Painter) Paint(c fyne.Canvas) image.Image {
-	bounds := image.Rect(0, 0, internal.ScaleInt(c, c.Size().Width), internal.ScaleInt(c, c.Size().Height))
+	bounds := image.Rect(0, 0, scale.ToScreenCoordinate(c, c.Size().Width), scale.ToScreenCoordinate(c, c.Size().Height))
 	base := image.NewNRGBA(bounds)
 
 	paint := func(obj fyne.CanvasObject, pos, clipPos fyne.Position, clipSize fyne.Size) bool {
-		w := fyne.Min(clipPos.X+clipSize.Width, c.Size().Width)
-		h := fyne.Min(clipPos.Y+clipSize.Height, c.Size().Height)
+		w := min(clipPos.X+clipSize.Width, c.Size().Width)
+		h := min(clipPos.Y+clipSize.Height, c.Size().Height)
 		clip := image.Rect(
-			internal.ScaleInt(c, clipPos.X),
-			internal.ScaleInt(c, clipPos.Y),
-			internal.ScaleInt(c, w),
-			internal.ScaleInt(c, h),
+			scale.ToScreenCoordinate(c, clipPos.X),
+			scale.ToScreenCoordinate(c, clipPos.Y),
+			scale.ToScreenCoordinate(c, w),
+			scale.ToScreenCoordinate(c, h),
 		)
 		switch o := obj.(type) {
 		case *canvas.Image:
@@ -45,10 +44,22 @@ func (*Painter) Paint(c fyne.Canvas) image.Image {
 			drawCircle(c, o, pos, base, clip)
 		case *canvas.Line:
 			drawLine(c, o, pos, base, clip)
+		case *canvas.RegularPolygon:
+			drawPolygon(c, o, pos, base, clip)
+		case *canvas.ArbitraryPolygon:
+			drawArbitraryPolygon(c, o, pos, base, clip)
 		case *canvas.Raster:
 			drawRaster(c, o, pos, base, clip)
 		case *canvas.Rectangle:
 			drawRectangle(c, o, pos, base, clip)
+		case *canvas.Blur:
+			drawBlur(c, o, pos, base, clip)
+		case *canvas.Arc:
+			drawArc(c, o, pos, base, clip)
+		case *canvas.BezierCurve:
+			drawBezierCurve(c, o, pos, base, clip)
+		case *canvas.Ellipse:
+			drawEllipse(c, o, pos, base, clip)
 		}
 
 		return false

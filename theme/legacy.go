@@ -21,7 +21,7 @@ type legacyWrapper struct {
 }
 
 func (l *legacyWrapper) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
-	switch n {
+	switch n { //revive:disable-line:identical-switch-branches
 	case ColorNameBackground:
 		return l.old.BackgroundColor()
 	case ColorNameForeground:
@@ -42,6 +42,8 @@ func (l *legacyWrapper) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.
 		return l.old.PrimaryColor()
 	case ColorNameScrollBar:
 		return l.old.ScrollBarColor()
+	case ColorNameScrollBarBackground:
+		return l.old.BackgroundColor()
 	case ColorNameShadow:
 		return l.old.ShadowColor()
 	default:
@@ -65,7 +67,7 @@ func (l *legacyWrapper) Font(s fyne.TextStyle) fyne.Resource {
 	return l.old.TextFont()
 }
 
-func (l *legacyWrapper) Icon(n fyne.ThemeIconName) fyne.Resource {
+func (*legacyWrapper) Icon(n fyne.ThemeIconName) fyne.Resource {
 	return DefaultTheme().Icon(n)
 }
 

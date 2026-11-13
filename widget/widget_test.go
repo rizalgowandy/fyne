@@ -1,14 +1,17 @@
 package widget
 
 import (
+	"image/color"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	internalWidget "fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/theme"
-	"github.com/stretchr/testify/assert"
 )
 
 type myWidget struct {
@@ -23,14 +26,14 @@ func (m *myWidget) Refresh() {
 
 func (m *myWidget) CreateRenderer() fyne.WidgetRenderer {
 	m.ExtendBaseWidget(m)
-	return &simpleRenderer{&fyne.Container{}}
+	return internalWidget.NewSimpleRenderer(&fyne.Container{})
 }
 
 func TestApplyThemeCalled(t *testing.T) {
-	widget := &myWidget{refreshed: make(chan bool)}
+	widget := &myWidget{refreshed: make(chan bool, 10)}
 
-	window := test.NewWindow(widget)
-	fyne.CurrentApp().Settings().SetTheme(theme.LightTheme())
+	test.NewTempWindow(t, widget)
+	fyne.CurrentApp().Settings().SetTheme(test.NewTheme())
 
 	func() {
 		select {
@@ -39,16 +42,14 @@ func TestApplyThemeCalled(t *testing.T) {
 			assert.Fail(t, "Timed out waiting for theme apply")
 		}
 	}()
-
-	window.Close()
 }
 
 func TestApplyThemeCalledChild(t *testing.T) {
-	child := &myWidget{refreshed: make(chan bool)}
+	child := &myWidget{refreshed: make(chan bool, 10)}
 	parent := &fyne.Container{Layout: layout.NewVBoxLayout(), Objects: []fyne.CanvasObject{child}}
 
-	window := test.NewWindow(parent)
-	fyne.CurrentApp().Settings().SetTheme(theme.LightTheme())
+	test.NewTempWindow(t, parent)
+	fyne.CurrentApp().Settings().SetTheme(test.NewTheme())
 	func() {
 		select {
 		case <-child.refreshed:
@@ -56,8 +57,35 @@ func TestApplyThemeCalledChild(t *testing.T) {
 			assert.Fail(t, "Timed out waiting for child theme apply")
 		}
 	}()
+}
 
-	window.Close()
+func TestSimpleRenderer(t *testing.T) {
+	test.NewTempApp(t)
+
+	c := &fyne.Container{Layout: layout.NewStackLayout(), Objects: []fyne.CanvasObject{
+		newTestWidget(canvas.NewRectangle(color.Gray{Y: 0x79})),
+		newTestWidget(canvas.NewText("Hi", color.Black)),
+	}}
+
+	window := test.NewWindow(c)
+	defer window.Close()
+
+	test.AssertImageMatches(t, "simple_renderer.png", window.Canvas().Capture())
+}
+
+type testWidget struct {
+	BaseWidget
+	obj fyne.CanvasObject
+}
+
+func newTestWidget(o fyne.CanvasObject) fyne.Widget {
+	t := &testWidget{obj: o}
+	t.ExtendBaseWidget(t)
+	return t
+}
+
+func (t *testWidget) CreateRenderer() fyne.WidgetRenderer {
+	return NewSimpleRenderer(t.obj)
 }
 
 func waitForBinding() {

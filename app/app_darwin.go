@@ -1,6 +1,4 @@
-// +build !ci
-
-// +build !ios
+//go:build !ci && !wasm && !test_web_driver && !mobile && !tinygo
 
 package app
 
@@ -8,70 +6,89 @@ package app
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Foundation
 
-#include <AppKit/AppKit.h>
+#include <stdbool.h>
+#include <stdlib.h>
 
 bool isBundled();
-bool isDarkMode();
-void sendNotification(const char *title, const char *content);
-void watchTheme();
+void sendNotification(char *title, char *content);
+bool scheduleNotification(char *id, char *title, char *content, double seconds);
+void cancelScheduledNotification(char *id);
 */
 import "C"
+
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/theme"
 )
 
-func defaultVariant() fyne.ThemeVariant {
-	if fyne.CurrentDevice().IsMobile() { // this is called in mobile simulate mode
-		return theme.VariantLight
-	}
-	if C.isDarkMode() {
-		return theme.VariantDark
-	}
-	return theme.VariantLight
-}
-
-func rootConfigDir() string {
-	homeDir, _ := os.UserHomeDir()
-
-	desktopConfig := filepath.Join(filepath.Join(homeDir, "Library"), "Preferences")
-	return filepath.Join(desktopConfig, "fyne")
-}
-
-func (app *fyneApp) OpenURL(url *url.URL) error {
-	cmd := app.exec("open", url.String())
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
-}
-
-func (app *fyneApp) SendNotification(n *fyne.Notification) {
+func (*fyneApp) SendNotification(n *fyne.Notification) {
 	if C.isBundled() {
-		title := C.CString(n.Title)
-		defer C.free(unsafe.Pointer(title))
-		content := C.CString(n.Content)
-		defer C.free(unsafe.Pointer(content))
+		titleStr := C.CString(n.Title)
+		defer C.free(unsafe.Pointer(titleStr))
+		contentStr := C.CString(n.Content)
+		defer C.free(unsafe.Pointer(contentStr))
 
-		C.sendNotification(title, content)
+		C.sendNotification(titleStr, contentStr)
 		return
 	}
 
-	title := escapeNotificationString(n.Title)
-	content := escapeNotificationString(n.Content)
-	template := `display notification "%s" with title "%s"`
-	script := fmt.Sprintf(template, content, title)
+	fallbackNotification(n.Title, n.Content)
+}
 
-	err := exec.Command("osascript", "-e", script).Start()
-	if err != nil {
-		fyne.LogError("Failed to launch darwin notify script", err)
+func (a *fyneApp) ScheduleNotification(n *fyne.Notification, when time.Time) (*fyne.ScheduledNotification, error) {
+	if !C.isBundled() {
+		// osascript path has no native scheduler - use the in-process fallback.
+		return a.scheduleViaScheduler(n, when)
 	}
+
+	delay := time.Until(when).Seconds()
+	if delay <= 0 {
+		return nil, errors.New("scheduled delivery time must be in the future")
+	}
+
+	id, err := newDarwinNotificationID()
+	if err != nil {
+		return nil, err
+	}
+	idStr := C.CString(id)
+	defer C.free(unsafe.Pointer(idStr))
+	titleStr := C.CString(n.Title)
+	defer C.free(unsafe.Pointer(titleStr))
+	contentStr := C.CString(n.Content)
+	defer C.free(unsafe.Pointer(contentStr))
+
+	if !bool(C.scheduleNotification(idStr, titleStr, contentStr, C.double(delay))) {
+		// older SDK or runtime refusal - use the in-process scheduler instead
+		return a.scheduleViaScheduler(n, when)
+	}
+	return fyne.NewScheduledNotification(id, n, when), nil
+}
+
+func (a *fyneApp) CancelScheduledNotification(id string) error {
+	if !C.isBundled() {
+		return a.cancelViaScheduler(id)
+	}
+
+	idStr := C.CString(id)
+	defer C.free(unsafe.Pointer(idStr))
+	C.cancelScheduledNotification(idStr)
+	return nil
+}
+
+func newDarwinNotificationID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "fyne-sched-" + hex.EncodeToString(b[:]), nil
 }
 
 func escapeNotificationString(in string) string {
@@ -79,11 +96,19 @@ func escapeNotificationString(in string) string {
 	return strings.ReplaceAll(noSlash, "\"", "\\\"")
 }
 
-//export themeChanged
-func themeChanged() {
-	fyne.CurrentApp().Settings().(*settings).setupTheme()
+//export fallbackSend
+func fallbackSend(cTitle, cContent *C.char) {
+	title := C.GoString(cTitle)
+	content := C.GoString(cContent)
+	fallbackNotification(title, content)
 }
 
-func watchTheme() {
-	C.watchTheme()
+func fallbackNotification(title, content string) {
+	template := `display notification "%s" with title "%s"`
+	script := fmt.Sprintf(template, escapeNotificationString(content), escapeNotificationString(title))
+
+	err := exec.Command("osascript", "-e", script).Start()
+	if err != nil {
+		fyne.LogError("Failed to launch darwin notify script", err)
+	}
 }

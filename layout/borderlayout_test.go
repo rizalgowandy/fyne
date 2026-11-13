@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	_ "fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -20,8 +21,8 @@ func TestNewBorderContainer(t *testing.T) {
 	right.SetMinSize(fyne.NewSize(10, 10))
 	middle := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
 
-	c := fyne.NewContainerWithLayout(layout.NewBorderLayout(top, nil, nil, right), top, right, middle)
-	assert.Equal(t, 3, len(c.Objects))
+	c := container.NewBorder(top, nil, nil, right, middle)
+	assert.Len(t, c.Objects, 3)
 
 	c.Resize(fyne.NewSize(100, 100))
 	assert.Equal(t, float32(0), top.Position().X)
@@ -38,12 +39,12 @@ func TestBorderLayout_Size_Empty(t *testing.T) {
 	size := fyne.NewSize(100, 100)
 
 	obj := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
-	container := &fyne.Container{
+	c := &fyne.Container{
 		Objects: []fyne.CanvasObject{obj},
 	}
-	container.Resize(size)
+	c.Resize(size)
 
-	layout.NewBorderLayout(nil, nil, nil, nil).Layout(container.Objects, size)
+	layout.NewBorderLayout(nil, nil, nil, nil).Layout(c.Objects, size)
 
 	assert.Equal(t, obj.Size(), size)
 }
@@ -55,12 +56,12 @@ func TestBorderLayout_Size_TopBottom(t *testing.T) {
 	obj2 := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
 	obj3 := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
 
-	container := &fyne.Container{
+	c := &fyne.Container{
 		Objects: []fyne.CanvasObject{obj1, obj2, obj3},
 	}
-	container.Resize(size)
+	c.Resize(size)
 
-	layout.NewBorderLayout(obj1, obj2, nil, nil).Layout(container.Objects, size)
+	layout.NewBorderLayout(obj1, obj2, nil, nil).Layout(c.Objects, size)
 
 	innerSize := fyne.NewSize(size.Width, size.Height-obj1.Size().Height-obj2.Size().Height-theme.Padding()*2)
 	assert.Equal(t, innerSize, obj3.Size())
@@ -76,12 +77,12 @@ func TestBorderLayout_Size_LeftRight(t *testing.T) {
 	obj2 := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
 	obj3 := canvas.NewRectangle(color.NRGBA{0, 0, 0, 0})
 
-	container := &fyne.Container{
+	c := &fyne.Container{
 		Objects: []fyne.CanvasObject{obj1, obj2, obj3},
 	}
-	container.Resize(size)
+	c.Resize(size)
 
-	layout.NewBorderLayout(nil, nil, obj1, obj2).Layout(container.Objects, size)
+	layout.NewBorderLayout(nil, nil, obj1, obj2).Layout(c.Objects, size)
 
 	innerSize := fyne.NewSize(size.Width-obj1.Size().Width-obj2.Size().Width-theme.Padding()*2, size.Height)
 	assert.Equal(t, innerSize, obj3.Size())
@@ -94,8 +95,8 @@ func TestBorderLayout_MinSize_Center(t *testing.T) {
 	text := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 	minSize := text.MinSize()
 
-	container := fyne.NewContainer(text)
-	layoutMin := layout.NewBorderLayout(nil, nil, nil, nil).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text)
+	layoutMin := layout.NewBorderLayout(nil, nil, nil, nil).MinSize(c.Objects)
 
 	assert.Equal(t, minSize, layoutMin)
 }
@@ -106,8 +107,8 @@ func TestBorderLayout_MinSize_TopBottom(t *testing.T) {
 	text3 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 	minSize := fyne.NewSize(text3.MinSize().Width, text1.MinSize().Height+text2.MinSize().Height+text3.MinSize().Height+theme.Padding()*2)
 
-	container := fyne.NewContainer(text1, text2, text3)
-	layoutMin := layout.NewBorderLayout(text1, text2, nil, nil).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1, text2, text3)
+	layoutMin := layout.NewBorderLayout(text1, text2, nil, nil).MinSize(c.Objects)
 
 	assert.Equal(t, minSize, layoutMin)
 }
@@ -119,8 +120,8 @@ func TestBorderLayout_MinSize_TopBottomHidden(t *testing.T) {
 	text2.Hide()
 	text3 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 
-	container := fyne.NewContainer(text1, text2, text3)
-	layoutMin := layout.NewBorderLayout(text1, text2, nil, nil).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1, text2, text3)
+	layoutMin := layout.NewBorderLayout(text1, text2, nil, nil).MinSize(c.Objects)
 
 	assert.Equal(t, text1.MinSize(), layoutMin)
 }
@@ -129,8 +130,8 @@ func TestBorderLayout_MinSize_TopOnly(t *testing.T) {
 	text1 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 	minSize := fyne.NewSize(text1.MinSize().Width, text1.MinSize().Height+theme.Padding())
 
-	container := fyne.NewContainer(text1)
-	layoutMin := layout.NewBorderLayout(text1, nil, nil, nil).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1)
+	layoutMin := layout.NewBorderLayout(text1, nil, nil, nil).MinSize(c.Objects)
 
 	assert.Equal(t, minSize, layoutMin)
 }
@@ -141,8 +142,8 @@ func TestBorderLayout_MinSize_LeftRight(t *testing.T) {
 	text3 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 	minSize := fyne.NewSize(text1.MinSize().Width+text2.MinSize().Width+text3.MinSize().Width+theme.Padding()*2, text3.MinSize().Height)
 
-	container := fyne.NewContainer(text1, text2, text3)
-	layoutMin := layout.NewBorderLayout(nil, nil, text1, text2).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1, text2, text3)
+	layoutMin := layout.NewBorderLayout(nil, nil, text1, text2).MinSize(c.Objects)
 
 	assert.Equal(t, minSize, layoutMin)
 }
@@ -154,8 +155,8 @@ func TestBorderLayout_MinSize_LeftRightHidden(t *testing.T) {
 	text2.Hide()
 	text3 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 
-	container := fyne.NewContainer(text1, text2, text3)
-	layoutMin := layout.NewBorderLayout(nil, nil, text1, text2).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1, text2, text3)
+	layoutMin := layout.NewBorderLayout(nil, nil, text1, text2).MinSize(c.Objects)
 
 	assert.Equal(t, text3.MinSize(), layoutMin)
 }
@@ -164,8 +165,8 @@ func TestBorderLayout_MinSize_LeftOnly(t *testing.T) {
 	text1 := canvas.NewText("Padding", color.NRGBA{0, 0xff, 0, 0})
 	minSize := fyne.NewSize(text1.MinSize().Width+theme.Padding(), text1.MinSize().Height)
 
-	container := fyne.NewContainer(text1)
-	layoutMin := layout.NewBorderLayout(nil, nil, text1, nil).MinSize(container.Objects)
+	c := container.NewWithoutLayout(text1)
+	layoutMin := layout.NewBorderLayout(nil, nil, text1, nil).MinSize(c.Objects)
 
 	assert.Equal(t, minSize, layoutMin)
 }

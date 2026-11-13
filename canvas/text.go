@@ -4,6 +4,8 @@ import (
 	"image/color"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/internal/cache"
+	"fyne.io/fyne/v2/theme"
 )
 
 // Declare conformity with CanvasObject interface
@@ -20,29 +22,97 @@ type Text struct {
 	Text      string         // The string content of this Text
 	TextSize  float32        // Size of the text - if the Canvas scale is 1.0 this will be equivalent to point size
 	TextStyle fyne.TextStyle // The style of the text content
+
+	// FontSource defines a resource that can be used instead of the theme for looking up the font.
+	// When a font source is set the `TextStyle` may not be effective, as it will be limited to the styles
+	// present in the data provided.
+	//
+	// Since: 2.5
+	FontSource fyne.Resource
+
+	measured textMeasure
+}
+
+type textMeasure struct {
+	valid   bool
+	fontGen uint64
+	scope   string
+	text    string
+	size    float32
+	style   fyne.TextStyle
+	result  fyne.Size
+}
+
+// Hide will set this text to not be visible
+func (t *Text) Hide() {
+	t.baseObject.Hide()
+
+	repaint(t)
+}
+
+type scopedTextMeasurer interface {
+	RenderedTextSizeFor(fyne.CanvasObject, string, float32, fyne.TextStyle, fyne.Resource) (fyne.Size, float32)
 }
 
 // MinSize returns the minimum size of this text object based on its font size and content.
 // This is normally determined by the render implementation.
 func (t *Text) MinSize() fyne.Size {
-	return fyne.MeasureText(t.Text, t.TextSize, t.TextStyle)
+	// not every resource is comparable, so text with a FontSource is not kept
+	m := &t.measured
+	gen := cache.FontMetricsGeneration()
+	scope := cache.WidgetScopeID(t)
+	if t.FontSource == nil && m.valid && m.fontGen == gen && m.scope == scope && m.text == t.Text && m.size == t.TextSize && m.style == t.TextStyle {
+		return m.result
+	}
+	var s fyne.Size
+	d := fyne.CurrentApp().Driver()
+	if scoped, ok := d.(scopedTextMeasurer); ok {
+		s, _ = scoped.RenderedTextSizeFor(t, t.Text, t.TextSize, t.TextStyle, t.FontSource)
+	} else {
+		s, _ = d.RenderedTextSize(t.Text, t.TextSize, t.TextStyle, t.FontSource)
+	}
+	if t.FontSource == nil {
+		*m = textMeasure{valid: true, fontGen: gen, scope: scope, text: t.Text, size: t.TextSize, style: t.TextStyle, result: s}
+	}
+	return s
+}
+
+// Move the text to a new position, relative to its parent / canvas
+func (t *Text) Move(pos fyne.Position) {
+	if t.Position() == pos {
+		return
+	}
+
+	t.baseObject.Move(pos)
+
+	repaint(t)
+}
+
+// Resize on a text updates the new size of this object, which may not result in a visual change, depending on alignment.
+func (t *Text) Resize(s fyne.Size) {
+	if s == t.Size() {
+		return
+	}
+
+	t.baseObject.Resize(s)
+	Refresh(t)
 }
 
 // SetMinSize has no effect as the smallest size this canvas object can be is based on its font size and content.
-func (t *Text) SetMinSize(size fyne.Size) {
+func (*Text) SetMinSize(fyne.Size) {
 	// no-op
 }
 
-// Refresh causes this object to be redrawn in it's current state
+// Refresh causes this text to be redrawn with its configured state.
 func (t *Text) Refresh() {
 	Refresh(t)
 }
 
 // NewText returns a new Text implementation
-func NewText(text string, color color.Color) *Text {
+func NewText(text string, c color.Color) *Text {
 	return &Text{
-		Color:    color,
+		Color:    c,
 		Text:     text,
-		TextSize: fyne.CurrentApp().Settings().Theme().Size("text"), // manually name the size to avoid import loop
+		TextSize: theme.TextSize(),
 	}
 }

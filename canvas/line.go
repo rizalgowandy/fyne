@@ -15,7 +15,7 @@ var _ fyne.CanvasObject = (*Line)(nil)
 // an inverse slope (i.e. slope up vs down).
 type Line struct {
 	Position1 fyne.Position // The current top-left position of the Line
-	Position2 fyne.Position // The current bottomright position of the Line
+	Position2 fyne.Position // The current bottom-right position of the Line
 	Hidden    bool          // Is this Line currently hidden
 
 	StrokeColor color.Color // The line stroke color
@@ -24,31 +24,54 @@ type Line struct {
 
 // Size returns the current size of bounding box for this line object
 func (l *Line) Size() fyne.Size {
-	return fyne.NewSize(float32(math.Abs(float64(l.Position2.X)-float64(l.Position1.X))),
-		float32(math.Abs(float64(l.Position2.Y)-float64(l.Position1.Y))))
+	return fyne.NewSize(
+		float32(math.Abs(float64(l.Position2.X)-float64(l.Position1.X))),
+		float32(math.Abs(float64(l.Position2.Y)-float64(l.Position1.Y))),
+	)
 }
 
-// Resize sets a new bottom-right position for the line object and it will then be refreshed.
+// Resize sets a new bottom-right position for the line object, then it will then be refreshed.
 func (l *Line) Resize(size fyne.Size) {
-	l.Position2 = fyne.NewPos(l.Position1.X+size.Width, l.Position1.Y+size.Height)
+	if size == l.Size() {
+		return
+	}
+
+	if l.Position1.X <= l.Position2.X {
+		l.Position2.X = l.Position1.X + size.Width
+	} else {
+		l.Position1.X = l.Position2.X + size.Width
+	}
+	if l.Position1.Y <= l.Position2.Y {
+		l.Position2.Y = l.Position1.Y + size.Height
+	} else {
+		l.Position1.Y = l.Position2.Y + size.Height
+	}
 	Refresh(l)
 }
 
 // Position gets the current top-left position of this line object, relative to its parent / canvas
 func (l *Line) Position() fyne.Position {
-	return fyne.NewPos(fyne.Min(l.Position1.X, l.Position2.X), fyne.Min(l.Position1.Y, l.Position2.Y))
+	return fyne.NewPos(min(l.Position1.X, l.Position2.X), min(l.Position1.Y, l.Position2.Y))
 }
 
 // Move the line object to a new position, relative to its parent / canvas
 func (l *Line) Move(pos fyne.Position) {
-	size := l.Size()
-	l.Position1 = pos
-	l.Position2 = fyne.NewPos(l.Position1.X+size.Width, l.Position1.Y+size.Height)
+	oldPos := l.Position()
+	if oldPos == pos {
+		return
+	}
+
+	deltaX := pos.X - oldPos.X
+	deltaY := pos.Y - oldPos.Y
+
+	l.Position1 = l.Position1.AddXY(deltaX, deltaY)
+	l.Position2 = l.Position2.AddXY(deltaX, deltaY)
+	repaint(l)
 }
 
 // MinSize for a Line simply returns Size{1, 1} as there is no
 // explicit content
-func (l *Line) MinSize() fyne.Size {
+func (*Line) MinSize() fyne.Size {
 	return fyne.NewSize(1, 1)
 }
 
@@ -68,18 +91,18 @@ func (l *Line) Show() {
 func (l *Line) Hide() {
 	l.Hidden = true
 
-	l.Refresh()
+	repaint(l)
 }
 
-// Refresh causes this object to be redrawn in it's current state
+// Refresh causes this line to be redrawn with its configured state.
 func (l *Line) Refresh() {
 	Refresh(l)
 }
 
 // NewLine returns a new Line instance
-func NewLine(color color.Color) *Line {
+func NewLine(c color.Color) *Line {
 	return &Line{
-		StrokeColor: color,
+		StrokeColor: c,
 		StrokeWidth: 1,
 	}
 }

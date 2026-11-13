@@ -1,7 +1,7 @@
-// +build !mobile
+//go:build !mobile
 
 package test
 
-func (d *device) IsMobile() bool {
+func (*device) IsMobile() bool {
 	return false
 }

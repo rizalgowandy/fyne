@@ -1,10 +1,9 @@
 package widget
 
 import (
-	"strings"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/internal/repository/mime"
 	"fyne.io/fyne/v2/internal/widget"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
@@ -21,15 +20,15 @@ const (
 type FileIcon struct {
 	BaseWidget
 
+	// Deprecated: Selection is now handled externally.
 	Selected bool
 	URI      fyne.URI
 
 	resource  fyne.Resource
 	extension string
-	cachedURI fyne.URI
 }
 
-// NewFileIcon takes a filepath and creates an icon with an overlayed label using the detected mimetype and extension
+// NewFileIcon takes a filepath and creates an icon with an overlaid label using the detected mimetype and extension
 //
 // Since: 1.4
 func NewFileIcon(uri fyne.URI) *FileIcon {
@@ -40,20 +39,18 @@ func NewFileIcon(uri fyne.URI) *FileIcon {
 
 // SetURI changes the URI and makes the icon reflect a different file
 func (i *FileIcon) SetURI(uri fyne.URI) {
-	if uri != i.URI {
-		i.URI = uri
-		i.Refresh()
-	}
+	i.URI = uri
+	i.Refresh()
 }
 
-func (i *FileIcon) setURI(uri fyne.URI) {
+// must be called with i.propertyLock RLocked
+func (i *FileIcon) applyURI(uri fyne.URI) {
 	if uri == nil {
-		i.resource = theme.FileIcon()
+		i.resource = i.Theme().Icon(theme.IconNameFile)
 		return
 	}
 
 	i.URI = uri
-	i.cachedURI = nil
 	i.resource = i.lookupIcon(i.URI)
 	i.extension = trimmedExtension(uri)
 }
@@ -66,48 +63,59 @@ func (i *FileIcon) MinSize() fyne.Size {
 
 // CreateRenderer is a private method to Fyne which links this widget to its renderer
 func (i *FileIcon) CreateRenderer() fyne.WidgetRenderer {
+	th := i.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+
 	i.ExtendBaseWidget(i)
-	i.propertyLock.RLock()
-	defer i.propertyLock.RUnlock()
+	i.applyURI(i.URI)
 
-	i.setURI(i.URI)
-
-	// TODO should FileIcon render a background representing selection, or should it be in the collection?
-	// TODO file dialog currently uses a container with NewGridWrapLayout, but if this changes to List, or Table then the primary color background would be rendered twice.
-	background := canvas.NewRectangle(theme.PrimaryColor())
+	// TODO remove background when `SetSelected` is gone.
+	background := canvas.NewRectangle(th.Color(theme.ColorNameSelection, v))
 	background.Hide()
 
 	s := &fileIconRenderer{file: i, background: background}
-	s.updateObjects()
-	i.cachedURI = i.URI
+	s.img = canvas.NewImageFromResource(s.file.resource)
+	s.img.FillMode = canvas.ImageFillContain
+	s.ext = canvas.NewText(s.file.extension, th.Color(theme.ColorNameBackground, v))
+	s.ext.Alignment = fyne.TextAlignCenter
+
+	s.SetObjects([]fyne.CanvasObject{s.background, s.img, s.ext})
 
 	return s
 }
 
-// SetSelected makes the file look like it is selected
+// SetSelected makes the file look like it is selected.
+//
+// Deprecated: Selection is now handled externally.
 func (i *FileIcon) SetSelected(selected bool) {
 	i.Selected = selected
 	i.Refresh()
 }
 
+// must be called with i.propertyLock RLocked
 func (i *FileIcon) lookupIcon(uri fyne.URI) fyne.Resource {
+	if icon, ok := uri.(fyne.URIWithIcon); ok {
+		return icon.Icon()
+	}
 	if i.isDir(uri) {
 		return theme.FolderIcon()
 	}
 
-	switch splitMimeType(uri) {
+	th := i.Theme()
+	mainMimeType, _ := mime.Split(uri.MimeType())
+	switch mainMimeType {
 	case "application":
-		return theme.FileApplicationIcon()
+		return th.Icon(theme.IconNameFileApplication)
 	case "audio":
-		return theme.FileAudioIcon()
+		return th.Icon(theme.IconNameFileAudio)
 	case "image":
-		return theme.FileImageIcon()
+		return th.Icon(theme.IconNameFileImage)
 	case "text":
-		return theme.FileTextIcon()
+		return th.Icon(theme.IconNameFileText)
 	case "video":
-		return theme.FileVideoIcon()
+		return th.Icon(theme.IconNameFileVideo)
 	default:
-		return theme.FileIcon()
+		return th.Icon(theme.IconNameFile)
 	}
 }
 
@@ -116,11 +124,13 @@ func (i *FileIcon) isDir(uri fyne.URI) bool {
 		return true
 	}
 
-	can, err := storage.CanList(uri)
+	listable, err := storage.ListerForURI(uri)
 	if err != nil {
 		return false
 	}
-	return can
+
+	i.URI = listable // Avoid having to call storage.ListerForURI(uri) the next time.
+	return true
 }
 
 type fileIconRenderer struct {
@@ -134,12 +144,12 @@ type fileIconRenderer struct {
 }
 
 func (s *fileIconRenderer) MinSize() fyne.Size {
-	size := theme.IconInlineSize()
-	return fyne.NewSize(size, size)
+	th := s.file.Theme()
+	return fyne.NewSquareSize(th.Size(theme.SizeNameInlineIcon))
 }
 
 func (s *fileIconRenderer) Layout(size fyne.Size) {
-	isize := fyne.Min(size.Width, size.Height)
+	isize := min(size.Width, size.Height)
 
 	xoff := float32(0)
 	yoff := (size.Height - isize) / 2
@@ -149,49 +159,48 @@ func (s *fileIconRenderer) Layout(size fyne.Size) {
 	}
 	yoff += isize * ratioDown
 
+	oldSize := s.ext.TextSize
 	s.ext.TextSize = float32(int(isize * ratioTextSize))
 	s.ext.Resize(fyne.NewSize(isize, s.ext.MinSize().Height))
 	s.ext.Move(fyne.NewPos(xoff, yoff))
+	if oldSize != s.ext.TextSize {
+		s.ext.Refresh()
+	}
 
 	s.Objects()[0].Resize(size)
 	s.Objects()[1].Resize(size)
 }
 
 func (s *fileIconRenderer) Refresh() {
-	if s.file.URI != s.file.cachedURI {
-		s.file.propertyLock.RLock()
-		s.file.setURI(s.file.URI)
-		s.updateObjects()
-		s.file.cachedURI = s.file.URI
-		s.file.propertyLock.RUnlock()
-	}
+	th := s.file.Theme()
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+
+	s.file.applyURI(s.file.URI)
 
 	if s.file.Selected {
 		s.background.Show()
-		s.ext.Color = theme.PrimaryColor()
+		s.ext.Color = th.Color(theme.ColorNameSelection, v)
 		if _, ok := s.img.Resource.(*theme.InvertedThemedResource); !ok {
 			s.img.Resource = theme.NewInvertedThemedResource(s.img.Resource)
 		}
 	} else {
 		s.background.Hide()
-		s.ext.Color = theme.BackgroundColor()
+		s.ext.Color = th.Color(theme.ColorNameBackground, v)
 		if res, ok := s.img.Resource.(*theme.InvertedThemedResource); ok {
 			s.img.Resource = res.Original()
 		}
 	}
 
+	if s.img.Resource != s.file.resource {
+		s.img.Resource = s.file.resource
+		s.img.Refresh()
+	}
+	if s.ext.Text != s.file.extension {
+		s.ext.Text = s.file.extension
+		s.ext.Refresh()
+	}
+
 	canvas.Refresh(s.file.super())
-	canvas.Refresh(s.ext)
-}
-
-func (s *fileIconRenderer) updateObjects() {
-	s.img = canvas.NewImageFromResource(s.file.resource)
-	s.ext = canvas.NewText(s.file.extension, theme.BackgroundColor())
-	s.img.FillMode = canvas.ImageFillContain
-	s.ext.Alignment = fyne.TextAlignCenter
-	s.ext.TextSize = theme.TextSize()
-
-	s.SetObjects([]fyne.CanvasObject{s.background, s.img, s.ext})
 }
 
 func trimmedExtension(uri fyne.URI) string {
@@ -200,12 +209,4 @@ func trimmedExtension(uri fyne.URI) string {
 		ext = ext[:5]
 	}
 	return ext
-}
-
-func splitMimeType(uri fyne.URI) string {
-	mimeTypeSplit := strings.Split(uri.MimeType(), "/")
-	if len(mimeTypeSplit) <= 1 {
-		return ""
-	}
-	return mimeTypeSplit[0]
 }

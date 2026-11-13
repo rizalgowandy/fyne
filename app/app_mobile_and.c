@@ -1,6 +1,4 @@
-// +build !ci
-
-// +build android
+//go:build !ci && android
 
 #include <android/log.h>
 #include <jni.h>
@@ -43,10 +41,10 @@ jobject getSystemService(uintptr_t jni_env, uintptr_t ctx, char *service) {
 	JNIEnv *env = (JNIEnv*)jni_env;
 	jstring serviceStr = (*env)->NewStringUTF(env, service);
 
-	jclass ctxClass = (*env)->GetObjectClass(env, ctx);
+	jclass ctxClass = (*env)->GetObjectClass(env, (jobject)ctx);
 	jmethodID getSystemService = find_method(env, ctxClass, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
 
-	return (jobject)(*env)->CallObjectMethod(env, ctx, getSystemService, serviceStr);
+	return (jobject)(*env)->CallObjectMethod(env, (jobject)ctx, getSystemService, serviceStr);
 }
 
 int nextId = 1;
@@ -59,6 +57,32 @@ bool isOreoOrLater(JNIEnv *env) {
     return sdkVersion >= 26; // O = Oreo, will not be defined for older builds
 }
 
+jobject parseURL(uintptr_t jni_env, uintptr_t ctx, char* uriCstr) {
+	JNIEnv *env = (JNIEnv*)jni_env;
+
+	jstring uriStr = (*env)->NewStringUTF(env, uriCstr);
+	jclass uriClass = find_class(env, "android/net/Uri");
+	jmethodID parse = find_static_method(env, uriClass, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+
+	return (jobject)(*env)->CallStaticObjectMethod(env, uriClass, parse, uriStr);
+}
+
+void openURL(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char *url) {
+	JNIEnv *env = (JNIEnv*)jni_env;
+	jobject uri = parseURL(jni_env, ctx, url);
+
+	jclass intentClass = find_class(env, "android/content/Intent");
+	jfieldID viewFieldID = (*env)->GetStaticFieldID(env, intentClass, "ACTION_VIEW", "Ljava/lang/String;" );
+    jstring view = (*env)->GetStaticObjectField(env, intentClass, viewFieldID);
+
+	jmethodID constructor = find_method(env, intentClass, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V");
+	jobject intent = (*env)->NewObject(env, intentClass, constructor, view, uri);
+
+	jclass contextClass = find_class(env, "android/content/Context");
+	jmethodID start = find_method(env, contextClass, "startActivity", "(Landroid/content/Intent;)V");
+	(*env)->CallVoidMethod(env, (jobject)ctx, start, intent);
+}
+
 void sendNotification(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char *title, char *body) {
 	JNIEnv *env = (JNIEnv*)jni_env;
 	jstring titleStr = (*env)->NewStringUTF(env, title);
@@ -69,7 +93,7 @@ void sendNotification(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char 
 	jobject builder = (*env)->NewObject(env, cls, constructor, ctx);
 
 	jclass mgrCls = find_class(env, "android/app/NotificationManager");
-	jobject mgr = getSystemService(env, ctx, "notification");
+	jobject mgr = getSystemService((uintptr_t)env, ctx, "notification");
 
 	if (isOreoOrLater(env)) {
 		jstring channelId = (*env)->NewStringUTF(env, "fyne-notif");
@@ -103,4 +127,43 @@ void sendNotification(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char 
 	jmethodID notify = find_method(env, mgrCls, "notify", "(ILandroid/app/Notification;)V");
 	(*env)->CallVoidMethod(env, mgr, notify, nextId, notif);
 	nextId++;
+}
+
+// JNI's FindClass uses the system class loader on a Go-spawned thread, which
+// cannot see APK-bundled classes like GoNativeActivity. The ctx parameter
+// is the running activity instance, so its runtime class is GoNativeActivity
+// itself - GetObjectClass returns the right jclass without going through
+// FindClass / the activity's ClassLoader.
+bool scheduleNotification(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx,
+		char *id, char *title, char *body, long long deliveryMillis) {
+	JNIEnv *env = (JNIEnv*)jni_env;
+
+	jclass cls = (*env)->GetObjectClass(env, (jobject)ctx);
+	jmethodID mid = find_static_method(env, cls, "scheduleNotification",
+		"(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)Z");
+	if (cls == NULL || mid == 0) {
+		return false;
+	}
+
+	jstring idStr = (*env)->NewStringUTF(env, id);
+	jstring titleStr = (*env)->NewStringUTF(env, title);
+	jstring bodyStr = (*env)->NewStringUTF(env, body);
+
+	jboolean ok = (*env)->CallStaticBooleanMethod(env, cls, mid,
+		idStr, titleStr, bodyStr, (jlong)deliveryMillis);
+	return (bool)ok;
+}
+
+void cancelScheduledNotification(uintptr_t java_vm, uintptr_t jni_env, uintptr_t ctx, char *id) {
+	JNIEnv *env = (JNIEnv*)jni_env;
+
+	jclass cls = (*env)->GetObjectClass(env, (jobject)ctx);
+	jmethodID mid = find_static_method(env, cls, "cancelScheduledNotification",
+		"(Ljava/lang/String;)V");
+	if (cls == NULL || mid == 0) {
+		return;
+	}
+
+	jstring idStr = (*env)->NewStringUTF(env, id);
+	(*env)->CallStaticVoidMethod(env, cls, mid, idStr);
 }

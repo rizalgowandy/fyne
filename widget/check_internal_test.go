@@ -1,21 +1,24 @@
 package widget
 
 import (
-	"fmt"
+	"image/color"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCheckSize(t *testing.T) {
 	check := NewCheck("Hi", nil)
-	min := check.MinSize()
+	minSize := check.MinSize()
 
-	assert.True(t, min.Width > theme.Padding()*2)
-	assert.True(t, min.Height > theme.Padding()*2)
+	assert.Greater(t, minSize.Width, theme.InnerPadding())
+	assert.Greater(t, minSize.Height, theme.InnerPadding())
 }
 
 func TestCheckChecked(t *testing.T) {
@@ -42,21 +45,21 @@ func TestCheckUnChecked(t *testing.T) {
 func TestCheck_DisabledWhenChecked(t *testing.T) {
 	check := NewCheck("Hi", nil)
 	check.SetChecked(true)
-	render := test.WidgetRenderer(check).(*checkRenderer)
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
 
-	assert.Equal(t, render.icon.Resource.Name(), theme.CheckButtonCheckedIcon().Name())
+	assert.True(t, strings.HasPrefix(render.icon.Resource.Name(), "primary_"))
 
 	check.Disable()
-	assert.Equal(t, render.icon.Resource.Name(), fmt.Sprintf("disabled_%v", theme.CheckButtonCheckedIcon().Name()))
+	assert.True(t, strings.HasPrefix(render.icon.Resource.Name(), "disabled_"))
 }
 
 func TestCheck_DisabledWhenUnchecked(t *testing.T) {
 	check := NewCheck("Hi", nil)
-	render := test.WidgetRenderer(check).(*checkRenderer)
-	assert.Equal(t, render.icon.Resource.Name(), theme.CheckButtonIcon().Name())
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
+	assert.True(t, strings.HasPrefix(render.icon.Resource.Name(), "inputBorder_"))
 
 	check.Disable()
-	assert.Equal(t, render.icon.Resource.Name(), fmt.Sprintf("disabled_%v", theme.CheckButtonIcon().Name()))
+	assert.True(t, strings.HasPrefix(render.icon.Resource.Name(), "disabled_"))
 }
 
 func TestCheckIsDisabledByDefault(t *testing.T) {
@@ -88,7 +91,7 @@ func TestCheckStateIsCorrectAfterMultipleUpdates(t *testing.T) {
 	expectedCheckedState := false
 	for i := 0; i < 5; i++ {
 		check.SetChecked(expectedCheckedState)
-		assert.True(t, checkedStateFromCallback == expectedCheckedState)
+		assert.Equal(t, expectedCheckedState, checkedStateFromCallback)
 
 		expectedCheckedState = !expectedCheckedState
 	}
@@ -123,26 +126,36 @@ func TestCheck_Enable(t *testing.T) {
 }
 
 func TestCheck_Focused(t *testing.T) {
-	check := NewCheck("Test", func(on bool) {})
-	render := test.WidgetRenderer(check).(*checkRenderer)
+	check := NewCheck("Test", func(bool) {})
+	w := test.NewWindow(check)
+	defer w.Close()
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
 
 	assert.False(t, check.focused)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
 
 	check.SetChecked(true)
 	assert.False(t, check.focused)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
 
 	test.Tap(check)
-	assert.True(t, check.focused)
-	assert.Equal(t, theme.FocusColor(), render.focusIndicator.FillColor)
+	if fyne.CurrentDevice().IsMobile() {
+		assert.False(t, check.focused)
+	} else {
+		assert.True(t, check.focused)
+		assert.Equal(t, theme.Color(theme.ColorNameFocus), render.focusIndicator.FillColor)
+	}
 
 	check.Disable()
-	assert.True(t, check.disabled)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.True(t, check.Disabled())
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
 
 	check.Enable()
-	assert.True(t, check.focused)
+	if fyne.CurrentDevice().IsMobile() {
+		assert.False(t, check.focused)
+	} else {
+		assert.True(t, check.focused)
+	}
 
 	check.Hide()
 	assert.False(t, check.focused)
@@ -152,52 +165,100 @@ func TestCheck_Focused(t *testing.T) {
 }
 
 func TestCheck_Hovered(t *testing.T) {
-	check := NewCheck("Test", func(on bool) {})
-	render := test.WidgetRenderer(check).(*checkRenderer)
+	check := NewCheck("Test", func(bool) {})
+	w := test.NewWindow(check)
+	defer w.Close()
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
 
 	check.SetChecked(true)
 	assert.False(t, check.hovered)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
 
 	check.MouseIn(&desktop.MouseEvent{})
 	assert.True(t, check.hovered)
-	assert.Equal(t, theme.HoverColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, theme.Color(theme.ColorNameHover), render.focusIndicator.FillColor)
 
 	test.Tap(check)
 	assert.True(t, check.hovered)
-	assert.Equal(t, theme.FocusColor(), render.focusIndicator.FillColor)
+	if !fyne.CurrentDevice().IsMobile() {
+		assert.Equal(t, theme.Color(theme.ColorNameFocus), render.focusIndicator.FillColor)
+	}
 
 	check.Disable()
-	assert.True(t, check.disabled)
+	assert.True(t, check.Disabled())
 	assert.True(t, check.hovered)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
 
 	check.Enable()
 	assert.True(t, check.hovered)
-	assert.Equal(t, theme.FocusColor(), render.focusIndicator.FillColor)
+	if fyne.CurrentDevice().IsMobile() {
+		assert.Equal(t, theme.Color(theme.ColorNameHover), render.focusIndicator.FillColor)
+	} else {
+		assert.Equal(t, theme.Color(theme.ColorNameFocus), render.focusIndicator.FillColor)
+	}
 
 	check.MouseOut()
 	assert.False(t, check.hovered)
-	assert.Equal(t, theme.FocusColor(), render.focusIndicator.FillColor)
+	if fyne.CurrentDevice().IsMobile() {
+		assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
+	} else {
+		assert.Equal(t, theme.Color(theme.ColorNameFocus), render.focusIndicator.FillColor)
+	}
 
 	check.FocusLost()
 	assert.False(t, check.hovered)
-	assert.Equal(t, theme.BackgroundColor(), render.focusIndicator.FillColor)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
+}
+
+func TestCheck_HoveredOutsideActiveArea(t *testing.T) {
+	check := NewCheck("Test", func(bool) {})
+	w := test.NewWindow(check)
+	defer w.Close()
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
+
+	check.SetChecked(true)
+	assert.False(t, check.hovered)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
+
+	ms := check.MinSize()
+	check.MouseIn(&desktop.MouseEvent{PointEvent: fyne.PointEvent{
+		Position: fyne.NewPos(ms.Width+2, 1),
+	}})
+	assert.False(t, check.hovered)
+	assert.Equal(t, color.Transparent, render.focusIndicator.FillColor)
+}
+
+func TestCheck_TappedOutsideActiveArea(t *testing.T) {
+	check := NewCheck("Test", func(bool) {})
+	w := test.NewWindow(check)
+	defer w.Close()
+
+	check.SetChecked(true)
+
+	ms := check.MinSize()
+	check.Tapped(&fyne.PointEvent{
+		Position: fyne.NewPos(ms.Width+2, 1),
+	})
+	assert.True(t, check.Checked)
 }
 
 func TestCheck_TypedRune(t *testing.T) {
-	check := NewCheck("Test", func(on bool) {})
+	check := NewCheck("Test", func(bool) {})
+	w := test.NewWindow(check)
+	defer w.Close()
 	assert.False(t, check.Checked)
 
 	test.Tap(check)
-	assert.True(t, check.focused)
+	if !fyne.CurrentDevice().IsMobile() {
+		assert.True(t, check.focused)
+	}
 	assert.True(t, check.Checked)
 
-	test.Type(check, " ")
+	test.Type(check, textSpace)
 	assert.False(t, check.Checked)
 
 	check.Disable()
-	test.Type(check, " ")
+	test.Type(check, textSpace)
 	assert.False(t, check.Checked)
 }
 
@@ -212,12 +273,14 @@ func TestCheck_Disabled(t *testing.T) {
 
 func TestCheckRenderer_ApplyTheme(t *testing.T) {
 	check := &Check{}
-	render := test.WidgetRenderer(check).(*checkRenderer)
+	v := fyne.CurrentApp().Settings().ThemeVariant()
+	render := test.TempWidgetRenderer(t, check).(*checkRenderer)
 
 	textSize := render.label.TextSize
 	customTextSize := textSize
 	test.WithTestTheme(t, func() {
-		render.applyTheme()
+		th := test.NewTheme()
+		render.applyTheme(th, v)
 		customTextSize = render.label.TextSize
 	})
 

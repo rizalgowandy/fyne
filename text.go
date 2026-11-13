@@ -13,6 +13,30 @@ const (
 	TextAlignTrailing
 )
 
+// TextTruncation controls how a `Label` or `Entry` will truncate its text.
+// The default value is `TextTruncateOff` which will not truncate.
+//
+// Since: 2.4
+type TextTruncation int
+
+const (
+	// TextTruncateOff means no truncation will be applied, it is the default.
+	// This means that the minimum size of a text block will be the space required to display it fully.
+	TextTruncateOff TextTruncation = iota
+	// TextTruncateClip will truncate text when it reaches the end of the available space.
+	TextTruncateClip
+	// TextTruncateEllipsis is like regular truncation except that an ellipses (…) will be inserted
+	// wherever text has been shortened to fit.
+	//
+	// Since: 2.4
+	TextTruncateEllipsis
+	// TextTruncateMiddle shortens text that does not fit by inserting an ellipsis (…) in the middle,
+	// preserving the beginning and end of the string.
+	//
+	// Since: 2.9
+	TextTruncateMiddle
+)
+
 // TextWrap represents how text longer than the widget's width will be wrapped.
 type TextWrap int
 
@@ -21,6 +45,8 @@ const (
 	TextWrapOff TextWrap = iota
 	// TextTruncate trims the text to the widget's width, no wrapping is applied.
 	// If an entry is asked to truncate it will provide scrolling capabilities.
+	//
+	// Deprecated: Use [TextTruncateClip] value of the widget `Truncation` field instead
 	TextTruncate
 	// TextWrapBreak trims the line of characters to the widget's width adding the excess as new line.
 	// An Entry with text wrapping will scroll vertically if there is not enough space for all the text.
@@ -36,9 +62,19 @@ type TextStyle struct {
 	Bold      bool // Should text be bold
 	Italic    bool // Should text be italic
 	Monospace bool // Use the system monospace font instead of regular
+	// Since: 2.2
+	Symbol bool // Use the system symbol font.
+	// Since: 2.1
+	TabWidth int // Width of tabs in spaces
+	// Since: 2.5
+	Underline bool // Should text be underlined.
+	// Since: 2.8
+	Strikethrough bool // Should text be struck through.
 }
 
 // MeasureText uses the current driver to calculate the size of text when rendered.
+// The font used will be read from the current app's theme.
 func MeasureText(text string, size float32, style TextStyle) Size {
-	return CurrentApp().Driver().RenderedTextSize(text, size, style)
+	s, _ := CurrentApp().Driver().RenderedTextSize(text, size, style, nil)
+	return s
 }

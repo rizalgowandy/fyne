@@ -70,7 +70,8 @@ func TestFocusManager_Focus(t *testing.T) {
 
 	t.Run("focus visible inside hidden", func(t *testing.T) {
 		manager, entry1, _, visibleInsideHidden, _, _, _ := setupFocusManager(t)
-		itBehavesLikeDoingNothing(t, manager, visibleInsideHidden, entry1, true)
+		// visible items hidden inside hidden widgets may not be discovered in traversal
+		itBehavesLikeDoingNothing(t, manager, visibleInsideHidden, entry1, false)
 	})
 
 	t.Run("focus foreign", func(t *testing.T) {
@@ -145,18 +146,20 @@ func TestFocusManager_FocusPrevious(t *testing.T) {
 	assert.False(t, entry1.focused)
 }
 
-var _ fyne.Widget = (*focusable)(nil)
-var _ fyne.Focusable = (*focusable)(nil)
-var _ fyne.Disableable = (*focusable)(nil)
+var (
+	_ fyne.Widget      = (*focusable)(nil)
+	_ fyne.Focusable   = (*focusable)(nil)
+	_ fyne.Disableable = (*focusable)(nil)
+)
 
 type focusable struct {
 	widget.DisableableWidget
-	children []fyne.CanvasObject
-	focused  bool
+	child   fyne.CanvasObject
+	focused bool
 }
 
 func (f *focusable) CreateRenderer() fyne.WidgetRenderer {
-	return &focusableRenderer{BaseRenderer: internalWidget.NewBaseRenderer(f.children)}
+	return internalWidget.NewSimpleRenderer(f.child)
 }
 
 func (f *focusable) FocusGained() {
@@ -170,34 +173,19 @@ func (f *focusable) FocusLost() {
 	f.focused = false
 }
 
-func (f *focusable) TypedRune(_ rune) {
+func (*focusable) TypedRune(_ rune) {
 }
 
-func (f *focusable) TypedKey(_ *fyne.KeyEvent) {
-}
-
-var _ fyne.WidgetRenderer = (*focusableRenderer)(nil)
-
-type focusableRenderer struct {
-	internalWidget.BaseRenderer
-}
-
-func (f focusableRenderer) Layout(_ fyne.Size) {
-}
-
-func (f focusableRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(0, 0)
-}
-
-func (f focusableRenderer) Refresh() {
+func (*focusable) TypedKey(_ *fyne.KeyEvent) {
 }
 
 func setupFocusManager(t *testing.T) (m *app.FocusManager, entry1, hidden, visibleInsideHidden, entry2, disabled, entry3 *focusable) {
 	entry1 = &focusable{}
 	visibleInsideHidden = &focusable{}
 	hidden = &focusable{
-		children: []fyne.CanvasObject{visibleInsideHidden},
+		child: visibleInsideHidden,
 	}
+	hidden.Refresh()
 	hidden.Hide()
 	entry2 = &focusable{}
 	disabled = &focusable{}
@@ -207,5 +195,5 @@ func setupFocusManager(t *testing.T) (m *app.FocusManager, entry1, hidden, visib
 	require.Nil(t, m.Focused())
 	require.False(t, hidden.Visible())
 	require.True(t, visibleInsideHidden.Visible())
-	return
+	return m, entry1, hidden, visibleInsideHidden, entry2, disabled, entry3
 }

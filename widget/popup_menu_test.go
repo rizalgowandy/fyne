@@ -1,4 +1,4 @@
-package widget
+package widget_test
 
 import (
 	"image/color"
@@ -9,11 +9,11 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 )
 
 func TestPopUpMenu_Move(t *testing.T) {
-	m, w := setupPopUpMenuTest()
-	defer tearDownPopUpMenuTest(w)
+	m, w := setupPopUpMenuTest(t)
 	c := w.Canvas()
 
 	m.Show()
@@ -30,8 +30,7 @@ func TestPopUpMenu_Move(t *testing.T) {
 }
 
 func TestPopUpMenu_Resize(t *testing.T) {
-	m, w := setupPopUpMenuTest()
-	defer tearDownPopUpMenuTest(w)
+	m, w := setupPopUpMenuTest(t)
 	c := w.Canvas()
 
 	m.ShowAtPosition(fyne.NewPos(10, 10))
@@ -43,12 +42,15 @@ func TestPopUpMenu_Resize(t *testing.T) {
 	largeSize := c.Size().Add(fyne.NewSize(10, 10))
 	m.Resize(largeSize)
 	test.AssertRendersToMarkup(t, "popup_menu/canvas_too_small.xml", c)
-	assert.Equal(t, fyne.NewSize(largeSize.Width, c.Size().Height), m.Size(), "width is larger than canvas; height is limited by canvas (menu scrolls)")
+	_, areaSize := c.InteractiveArea()
+	assert.Equal(t, fyne.NewSize(largeSize.Width, areaSize.Height), m.Size(), "width is larger than canvas; height is limited by canvas (menu scrolls)")
+
+	m.Resize(fyne.NewSize(largeSize.Width, 10))
+	assert.Equal(t, fyne.NewSize(largeSize.Width, m.MinSize().Height), m.Size(), "less height than the content needs grows back to the minimum")
 }
 
 func TestPopUpMenu_Show(t *testing.T) {
-	m, w := setupPopUpMenuTest()
-	defer tearDownPopUpMenuTest(w)
+	m, w := setupPopUpMenuTest(t)
 	c := w.Canvas()
 
 	test.AssertRendersToMarkup(t, "popup_menu/hidden.xml", c)
@@ -58,8 +60,7 @@ func TestPopUpMenu_Show(t *testing.T) {
 }
 
 func TestPopUpMenu_ShowAtPosition(t *testing.T) {
-	m, w := setupPopUpMenuTest()
-	defer tearDownPopUpMenuTest(w)
+	m, w := setupPopUpMenuTest(t)
 	c := w.Canvas()
 
 	test.AssertRendersToMarkup(t, "popup_menu/hidden.xml", c)
@@ -81,20 +82,23 @@ func TestPopUpMenu_ShowAtPosition(t *testing.T) {
 
 	m.Hide()
 	test.AssertRendersToMarkup(t, "popup_menu/hidden.xml", c)
-	menuSize := c.Size().Add(fyne.NewSize(10, 10))
-	m.Resize(menuSize)
 
 	m.ShowAtPosition(fyne.NewPos(10, 10))
+	menuSize := c.Size().Add(fyne.NewSize(10, 10))
+	m.Resize(menuSize)
 	test.AssertRendersToMarkup(t, "popup_menu/canvas_too_small.xml", c)
-	assert.Equal(t, fyne.NewSize(menuSize.Width, c.Size().Height), m.Size(), "width is larger than canvas; height is limited by canvas (menu scrolls)")
+	_, areaSize := c.InteractiveArea()
+	assert.Equal(t, fyne.NewSize(menuSize.Width, areaSize.Height), m.Size(), "width is larger than canvas; height is limited by canvas (menu scrolls)")
 }
 
-func setupPopUpMenuTest() (*PopUpMenu, fyne.Window) {
+func setupPopUpMenuTest(t *testing.T) (*widget.PopUpMenu, fyne.Window) {
 	test.NewApp()
 
-	w := test.NewWindow(canvas.NewRectangle(color.NRGBA{G: 150, B: 150, A: 255}))
+	w := test.NewTempWindow(t, canvas.NewRectangle(color.NRGBA{G: 150, B: 150, A: 255}))
+	t.Cleanup(func() { test.NewApp() })
+
 	w.Resize(fyne.NewSize(200, 200))
-	m := NewPopUpMenu(fyne.NewMenu(
+	m := widget.NewPopUpMenu(fyne.NewMenu(
 		"",
 		fyne.NewMenuItem("Option A", nil),
 		fyne.NewMenuItem("Option B", nil),
@@ -102,7 +106,21 @@ func setupPopUpMenuTest() (*PopUpMenu, fyne.Window) {
 	return m, w
 }
 
-func tearDownPopUpMenuTest(w fyne.Window) {
-	w.Close()
+func setupPopUpMenuWithSubmenusTest(t *testing.T, callback func(string)) (*widget.PopUpMenu, fyne.Window) {
 	test.NewApp()
+
+	w := test.NewTempWindow(t, canvas.NewRectangle(color.NRGBA{G: 150, B: 150, A: 255}))
+	t.Cleanup(func() { test.NewApp() })
+
+	w.Resize(fyne.NewSize(800, 600))
+	itemA := fyne.NewMenuItem("Option A", func() { callback("Option A") })
+	itemB := fyne.NewMenuItem("Option B", func() { callback("Option B") })
+	itemBA := fyne.NewMenuItem("Sub Option A", func() { callback("Sub Option A") })
+	itemBB := fyne.NewMenuItem("Sub Option B", func() { callback("Sub Option B") })
+	itemBBA := fyne.NewMenuItem("Sub Sub Option A", func() { callback("Sub Sub Option A") })
+	itemBBB := fyne.NewMenuItem("Sub Sub Option B", func() { callback("Sub Sub Option B") })
+	itemB.ChildMenu = fyne.NewMenu("", itemBA, itemBB)
+	itemBB.ChildMenu = fyne.NewMenu("", itemBBA, itemBBB)
+	m := widget.NewPopUpMenu(fyne.NewMenu("", itemA, itemB), w.Canvas())
+	return m, w
 }

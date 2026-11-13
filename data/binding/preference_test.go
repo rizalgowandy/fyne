@@ -1,12 +1,41 @@
 package binding
 
 import (
+	"sync"
 	"testing"
 	"time"
 
-	"fyne.io/fyne/v2/test"
 	"github.com/stretchr/testify/assert"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/test"
 )
+
+func TestBindPreference_DataRace(t *testing.T) {
+	a := test.NewApp()
+	p := a.Preferences()
+	key := "test-key"
+	const n = 100
+
+	var wg sync.WaitGroup
+
+	binds := make([]Int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		index := i
+		fyne.Do(func() {
+			bind := BindPreferenceInt(key, p)
+			binds[index] = bind
+			wg.Done()
+		})
+	}
+
+	wg.Wait()
+	expectedBind := binds[0]
+	for i := 0; i < n; i++ {
+		assert.Equal(t, expectedBind, binds[i])
+	}
+}
 
 func TestBindPreferenceBool(t *testing.T) {
 	a := test.NewApp()
@@ -110,13 +139,14 @@ func TestPreferenceBindingCopies(t *testing.T) {
 func TestPreferenceBindingTriggers(t *testing.T) {
 	a := test.NewApp()
 	p := a.Preferences()
+	prefBinds.appPrefs = nil // reset app migration checks
 	key := "test-string"
 
 	p.SetString(key, "aString")
 	bind1 := BindPreferenceString(key, p)
 	bind2 := BindPreferenceString(key, p)
 
-	ch := make(chan interface{}, 2)
+	ch := make(chan any, 2)
 	bind1.AddListener(NewDataListener(func() {
 		ch <- struct{}{}
 	}))
@@ -124,7 +154,7 @@ func TestPreferenceBindingTriggers(t *testing.T) {
 	select {
 	case <-ch: // bind1 gets initial value
 	case <-time.After(time.Millisecond * 100):
-		t.Errorf("Timed out waiting for data binding to send initial value")
+		t.Error("Timed out waiting for data binding to send initial value")
 	}
 
 	err := bind2.Set("overwritten") // write on a different listener, preferences should trigger all
@@ -132,13 +162,13 @@ func TestPreferenceBindingTriggers(t *testing.T) {
 	select {
 	case <-ch: // bind1 triggered by bind2 changing the same key
 	case <-time.After(time.Millisecond * 100):
-		t.Errorf("Timed out waiting for data binding change to trigger")
+		t.Error("Timed out waiting for data binding change to trigger")
 	}
 
 	p.SetString(key, "overwritten2") // changing preference should trigger as well
 	select {
 	case <-ch: // bind1 triggered by preferences changing the same key directly
 	case <-time.After(time.Millisecond * 300):
-		t.Errorf("Timed out waiting for data binding change to trigger")
+		t.Error("Timed out waiting for data binding change to trigger")
 	}
 }
